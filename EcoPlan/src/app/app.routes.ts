@@ -3,5 +3,6 @@ import { Dashboard } from './core/dashboard/dashboard';
 
 export const routes: Routes = [
     { path: 'dash', component: Dashboard },
-    { path: '', pathMatch: 'full', redirectTo: 'dash' },
+    { path: '', redirectTo: 'dash', pathMatch: 'full' },
+    { path: '**', redirectTo: 'dash' }
 ];

@@ -22,6 +22,7 @@ interface EcoData {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Dashboard {
+  version = "v0.5.1";
   servicio = inject(QueryImpactAnalyzer)
   planText = signal("{text:''}");
   cloud = signal<CloudProvider>("AWS");
@@ -31,9 +32,7 @@ export class Dashboard {
     cloud: 'AWS',
     frequency: 1000
   });
-  //ecoForm = form(this.ecoModel)
-  
-  
+
   isInvalidFormat = signal<boolean>(false);
   examples: ExamplePlan[] = examplesExplain;
   readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
