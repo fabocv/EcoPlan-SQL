@@ -90,4 +90,15 @@ Execution Time: 1210.340 ms`
 Planning Time: 1.250 ms
 Execution Time: 4650.900 ms`
     },
+    {
+      title:"Vampiro de CPU",
+      content:`
+      Seq Scan on transactions t  (cost=0.00..500000.00 rows=100000 width=32) (actual time=0.010..500.000 rows=100000 loops=1)
+  Filter: (t.amount > 1000)
+  SubPlan 1
+    ->  Index Scan using users_pk on users u  (cost=0.42..8.44 rows=1 width=32) (actual time=0.015..0.015 rows=1 loops=100000)
+          Index Cond: (u.id = t.user_id)
+Planning Time: 0.150 ms
+Execution Time: 2000.500 ms`
+    },
   ];
