@@ -34,6 +34,7 @@ export class Dashboard {
   isInvalidFormat = signal<boolean>(false);
   examples: ExamplePlan[] = examplesExplain;
   readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
+  valueExample = signal("");
 
   private sanitizeInput(input: string): string {
     // Elimina cualquier intento de tags HTML para evitar XSS
@@ -76,6 +77,7 @@ export class Dashboard {
   // Función para cargar el ejemplo seleccionado
   loadExample(event: Event) {
     const select = event.target as HTMLSelectElement;
+    this.valueExample.set(select.value);
     const example = this.examples.find(e => e.title === select.value);
     if (example) {
       this.ecoForm.explain().value.set(example.content);
