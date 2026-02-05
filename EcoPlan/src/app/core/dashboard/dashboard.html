@@ -1,0 +1,145 @@
+<div class="min-h-screen w-full bg-[#f8fafc] text-slate-900 font-sans">
+  
+  <header class="relative z-10 pt-16 pb-8 text-center px-4">
+    <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight text-slate-900 mb-4">
+      EcoPlan <span class="text-sky-600">SQL</span>
+    </h1>
+    <p class="text-lg text-slate-600 max-w-2xl mx-auto">
+      Auditoría de rendimiento FinOps para PostgreSQL. <br>
+      <span class="font-semibold text-sky-800">Convierte el impacto técnico en impacto económico.</span>
+    </p>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 pb-20">
+    <div class="bg-white rounded-2xl shadow-xl shadow-slate-200/60 p-6 md:p-8 border border-slate-100">
+      <label class="block text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">PostgreSQL Explain Analyze Output</label>
+      
+      @if(examples){
+      <div class="flex items-center justify-between mb-2">
+        <label class="text-sm font-semibold text-slate-700">Selecciona un Escenario Demo:</label>
+        <select 
+          [value]="valueExample()"
+          (change)="loadExample($event)"
+          class="bg-white border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 outline-none">
+          <option value="" disabled selected>-- Elige un ejemplo --</option>
+          @for (ex of examples; track ex.title) {
+            <option [value]="ex.title">{{ex.title}}</option>
+          }
+        </select>
+      </div>
+     }
+
+      <textarea 
+        [value]="ecoModel().explain"
+        (input)="setExplain($any($event.target).value)"
+        class="w-full h-64 p-6 font-mono text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-500 transition-all outline-none resize-none mb-6"
+        placeholder="Pega aquí tu salida de EXPLAIN ANALYZE..."></textarea>
+      
+      <div class="absolute bottom-3 right-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+        {{ ecoModel().explain.length || 0 }} / 10.000
+      </div>
+
+      <div class="flex flex-col md:flex-row items-center justify-between gap-6">
+        <div class="flex p-1 bg-slate-100 rounded-xl w-full md:w-auto">
+          @for (p of providers; track p) {
+            <button 
+              (click)="setCloud(p)"
+              [class.bg-white]="ecoModel().cloud === p"
+              [class.shadow-sm]="ecoModel().cloud === p"
+              [class.text-sky-600]="ecoModel().cloud === p"
+              class="flex-1 md:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all text-slate-500">
+              {{p}}
+            </button>
+          }
+          
+        </div>
+        <div class="flex flex-col gap-1 w-full md:w-48">
+          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">
+            Frecuencia Diaria
+          </label>
+          <div class="relative flex items-center">
+            <input 
+              type="number" 
+              [value]="ecoModel().frequency"
+              (input)="setFrecuency(+$any($event.target).value)"
+              (paste)="$event.preventDefault()"
+              (drop)="$event.preventDefault()"
+              onkeypress="return event.charCode >= 48 && event.charCode <= 57"
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold focus:ring-2 focus:ring-sky-500/20 outline-none transition-all"
+              placeholder="1 - 2,000,000"
+            >
+            <span class="absolute right-3 text-[10px] font-bold text-slate-400">/ día</span>
+          </div>
+        </div>
+
+        <button 
+          class="w-full md:w-auto rounded-xl px-10 py-4 font-bold bg-sky-900 text-white hover:bg-sky-800 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-sky-900/20" 
+          (click)="calcular()">
+          Calcular Diagnóstico
+        </button>
+      </div>
+    </div>
+
+    @if(!isInvalidFormat() && ecoModel().explain.trim().length>10 && analisisCorrecto()) {
+      <div class="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        
+        <div class="bg-white p-6 rounded-2xl border-b-4 border-emerald-500 shadow-sm">
+          <p class="text-slate-500 text-sm font-bold uppercase mb-2">Impacto Mensual</p>
+          <div class="flex items-baseline gap-1">
+            <span class="text-4xl font-black text-slate-900">{{analisis().economicImpact | currency: 'USD'}} </span>
+            <span class="text-slate-400 font-medium">USD</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-2 italic">*Estimado basado en {{analisis().provider}}</p>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl border-b-4 border-sky-500 shadow-sm">
+          <p class="text-slate-500 text-sm font-bold uppercase mb-2">Eco-Efficiency Score</p>
+          <div class="flex items-baseline gap-1">
+            <span class="text-4xl font-black text-slate-900">{{analisis().efficiencyScore.toFixed(0)}}</span>
+            <span class="text-slate-400 font-medium">/ 100</span>
+          </div>
+          <div class="w-full bg-slate-100 h-2 rounded-full mt-4">
+            <div class="bg-sky-500 h-2 rounded-full" [style.width.%]="analisis().efficiencyScore"></div>
+          </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl border-b-4 border-slate-900 shadow-sm">
+          <p class="text-slate-500 text-sm font-bold uppercase mb-2">Latencia Total unitaria</p>
+          <div class="flex items-baseline gap-1">
+            <span class="text-4xl font-black text-slate-900">{{analisis().executionTimeMs}}</span>
+            <span class="text-slate-400 font-medium">ms</span>
+          </div>
+        </div>
+
+        <div class="md:col-span-3 bg-slate-900 text-white p-8 rounded-2xl shadow-xl">
+          <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
+            <span class="text-sky-400"></span> Análisis del Explain
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            @for (sug of analisis().suggestions.list; track sug) {
+              <div class="bg-white/5 border border-white/10 p-4 rounded-xl flex items-start gap-3" [id]="'sug' + sug.slice(0,15)">
+                <span class="text-emerald-400">✔</span>
+                <span class="text-slate-300 text-sm">{{sug}}</span>
+              </div>
+            }
+          </div>
+          <h3 class="text-xl font-bold mb-6 flex items-center gap-2 mt-4">
+            <span class="text-sky-400">⚡</span> Recomendaciones generales de Optimización
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            @for (sug of analisis().suggestions.solucion; track sug) {
+              <div class="bg-white/5 border border-green-400 p-4 rounded-xl flex items-start gap-3" [id]="'reco' + sug.slice(0,15)">
+                <span class="text-emerald-400">✔</span>
+                <span class="text-slate-300 text-sm">{{sug}}</span>
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+    } @else if (isInvalidFormat() && ecoModel().explain.trim().length>10) {
+      <div class="mt-8 p-4 bg-red-50 border border-red-100 text-red-600 rounded-xl text-center font-medium">
+        El formato del EXPLAIN no es reconocido. Asegúrate de incluir 'cost=' y 'rows='.
+      </div>
+    }
+  </main>
+</div>
