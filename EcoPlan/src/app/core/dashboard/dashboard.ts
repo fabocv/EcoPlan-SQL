@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { CloudProvider, QueryImpactAnalyzer, AnalysisResult, voidAnalysis } from '../services/QueryImpactAnalyzer';
 import { form, FormField } from '@angular/forms/signals';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { CommonModule } from '@angular/common';
+import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 
 interface EcoData {
@@ -16,6 +16,7 @@ interface EcoData {
     FormField,
     ReactiveFormsModule,
     CommonModule,
+    CurrencyPipe,
   ],
   templateUrl: 'dashboard.html',
   styleUrl: './dashboard.css',
