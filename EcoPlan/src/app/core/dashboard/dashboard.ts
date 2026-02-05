@@ -8,6 +8,7 @@ import { ExamplePlan, examplesExplain } from './examples';
 interface EcoData {
   explain: string;
   cloud: CloudProvider;
+  frequency: number;
 }
 
 @Component({
@@ -30,6 +31,7 @@ export class Dashboard {
   ecoModel = signal<EcoData>({
     explain: '',
     cloud: 'AWS',
+    frequency: 1000
   });
   ecoForm = form(this.ecoModel)
   isInvalidFormat = signal<boolean>(false);
@@ -47,8 +49,12 @@ export class Dashboard {
   }
 
   calcular() {
+    this.validarRango();
     const rawText = this.ecoModel().explain;
     const cloudService = this.ecoModel().cloud;
+    let frequency = this.ecoModel().frequency;
+    if (frequency < 1) frequency = 1;
+    if (frequency > 2000000) frequency = 2000000;
 
     const cleanText = this.sanitizeInput(rawText);
 
@@ -63,9 +69,18 @@ export class Dashboard {
     }
 
     this.isInvalidFormat.set(false);
-    const res = this.servicio.analyze(cleanText, cloudService);
+    const res = this.servicio.analyze(cleanText, cloudService, frequency);
     
     this.analisis.set({ ...res }); 
+  }
+
+  validarRango() {
+    let valor = Math.floor(this.ecoModel().frequency); // Asegurar entero
+    
+    if (!valor || valor < 1) valor = 1;
+    if (valor > 2000000) valor = 2000000;
+    
+    this.ecoForm.frequency().value.set(valor);
   }
 
   analisisCorrecto(): boolean {
@@ -77,6 +92,7 @@ export class Dashboard {
 
   // Función para cargar el ejemplo seleccionado
   loadExample(event: Event) {
+    this.validarRango();
     const select = event.target as HTMLSelectElement;
     this.valueExample.set(select.value);
     const example = this.examples.find(e => e.title === select.value);
