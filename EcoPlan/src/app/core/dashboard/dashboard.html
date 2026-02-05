@@ -30,9 +30,14 @@
      }
 
       <textarea 
-        [formField]="ecoForm.explain" 
+        [value]="ecoModel().explain"
+        (input)="setExplain($any($event.target).value)"
         class="w-full h-64 p-6 font-mono text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-500 transition-all outline-none resize-none mb-6"
         placeholder="Pega aquí tu salida de EXPLAIN ANALYZE..."></textarea>
+      
+      <div class="absolute bottom-3 right-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+        {{ ecoModel().explain.length || 0 }} / 10.000
+      </div>
 
       <div class="flex flex-col md:flex-row items-center justify-between gap-6">
         <div class="flex p-1 bg-slate-100 rounded-xl w-full md:w-auto">
@@ -55,8 +60,8 @@
           <div class="relative flex items-center">
             <input 
               type="number" 
-              [formField]="ecoForm.frequency"
-              (blur)="validarRango()"
+              [value]="ecoModel().frequency"
+              (input)="setFrecuency(+$any($event.target).value)"
               (paste)="$event.preventDefault()"
               (drop)="$event.preventDefault()"
               onkeypress="return event.charCode >= 48 && event.charCode <= 57"

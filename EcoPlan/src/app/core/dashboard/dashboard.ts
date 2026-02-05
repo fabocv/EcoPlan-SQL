@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { CloudProvider, QueryImpactAnalyzer, AnalysisResult, voidAnalysis } from '../services/QueryImpactAnalyzer';
-import { form, FormField } from '@angular/forms/signals';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 
@@ -14,7 +13,6 @@ interface EcoData {
 @Component({
   selector: 'app-dashboard',
   imports: [FormsModule,
-    FormField,
     ReactiveFormsModule,
     CommonModule,
     CurrencyPipe,
@@ -33,7 +31,9 @@ export class Dashboard {
     cloud: 'AWS',
     frequency: 1000
   });
-  ecoForm = form(this.ecoModel)
+  //ecoForm = form(this.ecoModel)
+  
+  
   isInvalidFormat = signal<boolean>(false);
   examples: ExamplePlan[] = examplesExplain;
   readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
@@ -46,6 +46,14 @@ export class Dashboard {
 
   setCloud(serviceCloud: CloudProvider) {
     this.ecoModel.update(val => ({ ...val, cloud: serviceCloud }));
+  }
+
+  setExplain( raw: string ) {
+    this.ecoModel.update(f => ({ ...f, explain:raw }));
+  }
+
+  setFrecuency( raw: number ) {
+    this.ecoModel.update(f => ({ ...f, frequency:raw }));
   }
 
   calcular() {
@@ -80,7 +88,10 @@ export class Dashboard {
     if (!valor || valor < 1) valor = 1;
     if (valor > 2000000) valor = 2000000;
     
-    this.ecoForm.frequency().value.set(valor);
+    this.ecoModel.update(f => ({
+      ...f,
+      frequency: valor
+    }));
   }
 
   analisisCorrecto(): boolean {
@@ -97,7 +108,10 @@ export class Dashboard {
     this.valueExample.set(select.value);
     const example = this.examples.find(e => e.title === select.value);
     if (example) {
-      this.ecoForm.explain().value.set(example.content);
+      this.ecoModel.update(f => ({
+        ...f,
+        explain: example.content
+      }));
       setTimeout(() => this.calcular(), 100);
     }
   }
