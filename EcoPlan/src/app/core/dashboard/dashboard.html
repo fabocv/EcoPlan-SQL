@@ -32,10 +32,11 @@
       <textarea 
         [value]="ecoModel().explain"
         (input)="setExplain($any($event.target).value)"
-        class="w-full h-64 p-6 font-mono text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-500 transition-all outline-none resize-none mb-6"
+        class="w-full h-64 p-6 font-mono text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-500
+        transition-all outline-none resize-none mb-0"
         placeholder="Pega aquí tu salida de EXPLAIN ANALYZE..."></textarea>
       
-      <div class="absolute bottom-3 right-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+      <div class=" right-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
         {{ ecoModel().explain.length || 0 }} / 10.000
       </div>
 
@@ -57,7 +58,7 @@
           <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">
             Frecuencia Diaria
           </label>
-          <div class="relative flex items-center">
+          <div class="relative flex items-center gap-2">
             <input 
               type="number" 
               [value]="ecoModel().frequency"
@@ -65,7 +66,9 @@
               (paste)="$event.preventDefault()"
               (drop)="$event.preventDefault()"
               onkeypress="return event.charCode >= 48 && event.charCode <= 57"
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold focus:ring-2 focus:ring-sky-500/20 outline-none transition-all"
+              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold focus:ring-2
+              focus:ring-sky-500/20 outline-none transition-all 
+              [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               placeholder="1 - 2,000,000"
             >
             <span class="absolute right-3 text-[10px] font-bold text-slate-400">/ día</span>
@@ -124,7 +127,7 @@
             }
           </div>
           <h3 class="text-xl font-bold mb-6 flex items-center gap-2 mt-4">
-            <span class="text-sky-400">⚡</span> Recomendaciones generales de Optimización
+             Recomendaciones generales de Optimización
           </h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             @for (sug of analisis().suggestions.solucion; track sug) {
@@ -141,5 +144,36 @@
         El formato del EXPLAIN no es reconocido. Asegúrate de incluir 'cost=' y 'rows='.
       </div>
     }
+
+    <footer class="w-full bg-slate-50 border-t border-slate-200 py-6 mt-auto">
+      <div class="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
+        
+        <div class="flex items-center gap-2 text-slate-600">
+          <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
+          </svg>
+          <a href="https://github.com/fabocv/EcoPlan-SQL" class="text-sm font-medium tracking-tight">
+            EcoPlan-SQL Baseline
+          </a>
+        </div>
+
+        <div class="text-slate-500 text-sm">
+          Desarrollado por 
+          <a href="https://github.com/fabocv" 
+            target="_blank" 
+            class="text-emerald-600 font-bold hover:text-emerald-500 transition-colors duration-200">
+            @fabocv
+          </a>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <a href="https://github.com/fabocv/EcoPlan-SQL" class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700">
+            {{version}} Online
+          </a>
+          <span class="text-slate-400 text-xs italic">© 2026</span>
+        </div>
+
+      </div>
+    </footer>
   </main>
 </div>

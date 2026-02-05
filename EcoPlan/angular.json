@@ -18,7 +18,7 @@
           "options": {
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
-            "baseHref": "/EcoPlan-SQL/",
+            
             "assets": [
               {
                 "glob": "**/*",
@@ -30,7 +30,6 @@
             ],
             "outputPath":"dist/EcoPlan",
             "prerender": false,
-            "server": "src/main.server.ts",
             "outputMode": "static",
             "ssr": false
           },
