@@ -16,85 +16,69 @@ export interface AnalysisResult {
   executionTimeMs: number;
   economicImpact: number;
   suggestions: string[];
-  efficiencyScore: number; // 0 a 100
+  efficiencyScore: number;
+  provider: CloudProvider;
 }
 
-/**
- * Precios de referencia (Simulados para el Portfolio)
- * Basados en instancias promedio (ej. AWS r5.large)
- */
+export const voidAnalysis: AnalysisResult = {
+  executionTimeMs: 0,
+  economicImpact: 0,
+  suggestions: [],
+  efficiencyScore: 0,
+  provider: 'AWS'
+};
+
 const CLOUD_RATES: Record<CloudProvider, CloudPricing> = {
   AWS:   { computeUnitCostPerMs: 0.000012, ioCostPerBuffer: 0.0000005 },
   GCP:   { computeUnitCostPerMs: 0.000010, ioCostPerBuffer: 0.0000004 },
   Azure: { computeUnitCostPerMs: 0.000011, ioCostPerBuffer: 0.0000006 }
 };
 
-// Extension para el calculo de sostenibilidad
-interface GreenMetrics {
-  co2Grams: number; // Gramos de CO2 producidos
-  treeEquivalent: number; // Cuántos árboles se necesitarían para absorber esto en un día
-}
-
-const CARBON_INTENSITY = 0.475; // gCO2e por cada Wh (Promedio global)
-const SERVER_WATTAGE = 250;     // Consumo promedio de un nodo de base de datos en Watts
-
 @Injectable({
-  providedIn: 'root' // Makes the service available throughout the app
+  providedIn: 'root'
 })
 export class QueryImpactAnalyzer {
   
-  /**
-   * Calcula el impacto económico y técnico
-   * @param planText El texto del EXPLAIN ANALYZE
-   * @param provider Proveedor de nube para el cálculo de costos
-   * @param frequencyPerDay Cuántas veces se ejecuta esta query al día
-   */
   public analyze(planText: string, provider: CloudProvider = 'AWS', frequencyPerDay: number = 1000): AnalysisResult {
     const timeMs = this.extractExecutionTime(planText);
     const buffers = this.extractBuffers(planText);
     const rowsRemoved = this.extractRowsRemoved(planText);
+    const rowsReturned = this.extractRowsReturned(planText);
     
     const rates = CLOUD_RATES[provider];
     
-    // Cálculo de impacto económico (Costo por ejecución * frecuencia diaria * 30 días)
-    const costPerExecution = (timeMs * rates.computeUnitCostPerMs) + (buffers * rates.ioCostPerBuffer);
+    // Artesanía Técnica: Si no hay buffers reales, estimamos el tráfico de I/O
+    // basado en el volumen de filas procesadas para evitar costos de $0.
+    const estimatedBuffers = buffers > 0 ? buffers : Math.ceil((rowsReturned + rowsRemoved) / 10);
+    
+    const costPerExecution = (timeMs * rates.computeUnitCostPerMs) + (estimatedBuffers * rates.ioCostPerBuffer);
     const monthlyImpact = costPerExecution * frequencyPerDay * 30;
 
-    const suggestions = this.generateSuggestions(planText, timeMs, rowsRemoved);
+    const suggestions = this.generateSuggestions(planText, timeMs, rowsRemoved, rowsReturned);
     
     return {
       executionTimeMs: timeMs,
       economicImpact: parseFloat(monthlyImpact.toFixed(2)),
       suggestions,
-      efficiencyScore: this.calculateEfficiency(timeMs, rowsRemoved)
-    };
-  }
-
-  /**
-   * Calcula el impacto ambiental en CO2
-   * @param executionTimeMs El tiempo de ejecucion obtenido del analyze
-   * @param frequencyPerDay Cuántas veces se ejecuta esta query al día
-   */
-  public calculateEnvironmentalImpact(executionTimeMs: number, frequencyPerDay: number): GreenMetrics {
-    const totalTimeHours = (executionTimeMs * frequencyPerDay * 30) / (1000 * 60 * 60);
-    const totalKWh = (totalTimeHours * SERVER_WATTAGE) / 1000;
-    
-    const co2Grams = totalKWh * CARBON_INTENSITY;
-    // Un árbol absorbe aprox 60g de CO2 al día
-    const treeEquivalent = co2Grams / 60;
-
-    return {
-        co2Grams: parseFloat(co2Grams.toFixed(2)),
-        treeEquivalent: parseFloat(treeEquivalent.toFixed(2))
+      efficiencyScore: this.calculateEfficiency(timeMs, rowsRemoved, rowsReturned),
+      provider: provider
     };
   }
 
   private extractExecutionTime(text: string): number {
-    console.log(text)
-    const regex = /Execution time:\s+([\d.]+)\s+ms/;
-    const match = text.match(regex);
-    console.log(match)
-    return match ? parseFloat(match[1]) : 0;
+    // Regex flexible para "Execution time" o "Execution Time"
+    const execMatch = text.match(/Execution [Tt]ime:\s+([\d.]+)\s+ms/);
+    if (execMatch) return parseFloat(execMatch[1]);
+
+    // Fallback: Si no está el tiempo final, buscar el tiempo del nodo raíz
+    const rootTimeMatch = text.match(/\(actual time=[\d.]+\.\.([\d.]+)/);
+    return rootTimeMatch ? parseFloat(rootTimeMatch[1]) : 0;
+  }
+
+  private extractRowsReturned(text: string): number {
+    // Captura las filas del nodo principal (resultado final)
+    const match = text.match(/actual time=.*?rows=(\d+)/);
+    return match ? parseInt(match[1]) : 0;
   }
 
   private extractBuffers(text: string): number {
@@ -103,48 +87,63 @@ export class QueryImpactAnalyzer {
     return (hitMatch ? parseInt(hitMatch[1]) : 0) + (readMatch ? parseInt(readMatch[1]) : 0);
   }
 
-  private slowestTable(text:string): {slowestTable:string, maxTime: number} {
+  private extractRowsRemoved(text: string): number {
+    const matches = Array.from(text.matchAll(/Rows Removed by Filter: (\d+)/g));
+    return matches.reduce((acc, m) => acc + parseInt(m[1]), 0);
+  }
+
+  private calculateEfficiency(time: number, removed: number, returned: number): number {
+    if (time === 0) return 0;
+    const totalProcessed = removed + returned;
+    if (totalProcessed === 0) return 100;
+
+    const wasteRatio = removed / totalProcessed;
+    // La eficiencia cae si hay mucho desperdicio de filas o latencia alta (>500ms)
+    const score = (1 - wasteRatio) * 100 - (time / 500);
+    return Math.max(0, Math.min(100, parseFloat(score.toFixed(2))));
+  }
+
+  private generateSuggestions(text: string, time: number, removed: number, returned: number): string[] {
+    const list: string[] = [];
+    
+    if (text.includes('Seq Scan') && removed > returned) {
+      list.push("⚠️ Seq Scan detectado: Se están descartando más filas de las que se devuelven. Falta un índice.");
+    }
+
+    if (text.includes('Disk:')) {
+      list.push("💾 Memoria Crítica: Se usó el disco para ordenar. Sube el 'work_mem'.");
+    }
+
+    // Detección de Memoria mejorada 
+    const batchMatch = text.match(/Batches: (\d+)/);
+    if (batchMatch && parseInt(batchMatch[1]) > 1) {
+        list.push(`⚠️ Memoria Insuficiente: Se detectaron ${batchMatch[1]} batches. El Hash Join se desbordó a disco. Incrementa 'work_mem'.`);
+    } else if (text.includes('Disk:')) {
+        list.push("Memory: Work_mem spill to disk. Increase RAM allocation.");
+    }
+
+    // la tabla más lenta
+    const slowest = this.getSlowestTable(text);
+    // Solo sugerir si la tabla consume más del 10% del tiempo total de ejecución
+    if (slowest.name && slowest.maxTime > (time * 0.1)) {
+      list.push(`🐢 Bottleneck Detectado: La tabla '${slowest.name}' consume ${((slowest.maxTime/time)*100).toFixed(1)}% del tiempo total.`);
+    }
+
+    return list;
+  }
+
+  private getSlowestTable(text: string) {
     const scans = text.matchAll(/Seq Scan on (\w+).*actual time=[\d.]+\.\.([\d.]+)/g);
-    let slowestTable = "";
+    let name = "";
     let maxTime = 0;
 
     for (const match of scans) {
-      const tableTime = parseFloat(match[2]);
-      if (tableTime > maxTime) {
-          maxTime = tableTime;
-          slowestTable = match[1];
+      const time = parseFloat(match[2]);
+      if (time > maxTime) {
+        maxTime = time;
+        name = match[1];
       }
     }
-
-    return {slowestTable:slowestTable, maxTime: maxTime}
-
-  }
-
-  private extractRowsRemoved(text: string): number {
-    const matches = text.matchAll(/Rows Removed by Filter: (\d+)/g);
-    let total = 0;
-    for (const match of matches) {
-      total += parseInt(match[1]);
-    }
-    return total;
-  }
-
-  private calculateEfficiency(time: number, removed: number): number {
-    if (time === 0) return 100;
-    // Una métrica simple: a más filas removidas y más tiempo, menor eficiencia
-    const penalty = (removed / 10000) + (time / 100);
-    return Math.max(0, Math.min(100, 100 - penalty));
-  }
-
-  private generateSuggestions(text: string, time: number, removed: number): string[] {
-    const list: string[] = [];
-    if (text.includes('Seq Scan') && removed > 10000) list.push("Critical: Missing Index detected.");
-    if (text.includes('Disk:')) list.push("Memory: Work_mem spill to disk. Increase RAM allocation.");
-    if (time > 1000) list.push("Architecture: Query time exceeds 1s. Evaluate partitioning.");
-    const slowest = this.slowestTable(text);
-    if (slowest) {
-      list.push(`Performance: Table '${slowest.slowestTable}' is the main bottleneck (${slowest.maxTime}ms).`)
-    }
-    return list;
+    return { name, maxTime };
   }
 }

@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { CloudProvider, QueryImpactAnalyzer, AnalysisResult } from '../services/QueryImpactAnalyzer';
+import { CloudProvider, QueryImpactAnalyzer, AnalysisResult, voidAnalysis } from '../services/QueryImpactAnalyzer';
 import { form, FormField } from '@angular/forms/signals';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { CommonModule } from '@angular/common';
+import { ExamplePlan, examplesExplain } from './examples';
 
 interface EcoData {
   explain: string;
@@ -12,7 +14,9 @@ interface EcoData {
   selector: 'app-dashboard',
   imports: [FormsModule,
     FormField,
-    ReactiveFormsModule,],
+    ReactiveFormsModule,
+    CommonModule,
+  ],
   templateUrl: 'dashboard.html',
   styleUrl: './dashboard.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -21,27 +25,61 @@ export class Dashboard {
   servicio = inject(QueryImpactAnalyzer)
   planText = signal("{text:''}");
   cloud = signal<CloudProvider>("AWS");
-  analisis = signal<string>("")
+  analisis = signal<AnalysisResult>(voidAnalysis)
   ecoModel = signal<EcoData>({
     explain: '',
     cloud: 'AWS',
   });
   ecoForm = form(this.ecoModel)
+  isInvalidFormat = signal<boolean>(false);
+  examples: ExamplePlan[] = examplesExplain;
+  readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
+
+  private sanitizeInput(input: string): string {
+    // Elimina cualquier intento de tags HTML para evitar XSS
+    return input.replace(/<[^>]*>?/gm, '').trim();
+  }
 
   setCloud(serviceCloud: CloudProvider) {
-    this.ecoForm.cloud().value.set(serviceCloud);
+    this.ecoModel.update(val => ({ ...val, cloud: serviceCloud }));
   }
 
   calcular() {
-    const texto = this.ecoModel().explain;
+    const rawText = this.ecoModel().explain;
     const cloudService = this.ecoModel().cloud;
-    const res: AnalysisResult = this.servicio.analyze(texto, cloudService)
-    console.log(this.cloud(), res);
-    this.analisis.set(
-      '\nImpacto economico: $' + res.economicImpact.toFixed(2) + "USD (Proyectado Mensual)" +
-      '\nPuntuaje de eficiencia: ' + res.efficiencyScore.toFixed(2) +
-      '\nTiempo de ejecución: ' + res.executionTimeMs + " ms" +
-      '\nSugerencias: ' + res.suggestions
-    );
+
+    const cleanText = this.sanitizeInput(rawText);
+
+    const isValid = cleanText.length > 10 && 
+                    cleanText.toLowerCase().includes('cost=') && 
+                    cleanText.toLowerCase().includes('rows=');
+
+    if (!isValid) {
+      this.isInvalidFormat.set(true);
+      this.analisis.set(voidAnalysis);
+      return;
+    }
+
+    this.isInvalidFormat.set(false);
+    const res = this.servicio.analyze(cleanText, cloudService);
+    
+    this.analisis.set({ ...res }); 
+  }
+
+  analisisCorrecto(): boolean {
+    return this.analisis().executionTimeMs > 0;
+  }
+
+
+  
+
+  // Función para cargar el ejemplo seleccionado
+  loadExample(event: Event) {
+    const select = event.target as HTMLSelectElement;
+    const example = this.examples.find(e => e.title === select.value);
+    if (example) {
+      this.ecoForm.explain().value.set(example.content);
+      setTimeout(() => this.calcular(), 100);
+    }
   }
 }
