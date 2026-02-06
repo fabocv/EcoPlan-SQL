@@ -17,6 +17,8 @@ EcoPlan SQL es una herramienta diseñada para desarrolladores y equipos de FinOp
 * **TypeScript / Node.js** - Núcleo de procesamiento.
 * **Angular 21** - EL dashboard web
 
+### [Visita EcoPlan-SQL Online](https://fabocv.github.io/EcoPlan-SQL/)
+
 ## Instalación
 
 ```bash
