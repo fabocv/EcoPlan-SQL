@@ -11,16 +11,16 @@
   </header>
 
   <main class="max-w-5xl mx-auto px-4 pb-20">
-    <div class="bg-white rounded-2xl shadow-xl shadow-slate-200/60 p-6 md:p-8 border border-slate-100">
+    <div class="column bg-white rounded-2xl shadow-xl shadow-slate-200/60 p-6 md:p-8 border border-slate-100">
       <label class="block text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">PostgreSQL Explain Analyze Output</label>
       
       @if(examples){
-      <div class="flex items-center justify-between mb-2">
+      <div class="column md:flex items-center justify-between mb-2">
         <label class="text-sm font-semibold text-slate-700">Selecciona un Escenario Demo:</label>
         <select 
           [value]="valueExample()"
           (change)="loadExample($event)"
-          class="bg-white border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 outline-none">
+          class="max-w-[80%] bg-white border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 outline-none">
           <option value="" disabled selected>-- Elige un ejemplo --</option>
           @for (ex of examples; track ex.title) {
             <option [value]="ex.title">{{ex.title}}</option>
