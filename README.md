@@ -1,7 +1,7 @@
 # EcoPlan SQL
 > **Transforming database execution plans into business and environmental insights.**
 
-EcoPlan SQL es una herramienta de CLI (Command Line Interface) diseñada para desarrolladores y equipos de FinOps que buscan optimizar el rendimiento de PostgreSQL. A diferencia de los visualizadores tradicionales, EcoPlan traduce el `EXPLAIN ANALYZE` en **costos reales de nube** e **impacto de huella de carbono**.
+EcoPlan SQL es una herramienta diseñada para desarrolladores y equipos de FinOps que buscan optimizar el rendimiento de PostgreSQL. A diferencia de los visualizadores tradicionales, EcoPlan traduce el `EXPLAIN ANALYZE` en **costos reales de nube** e **impacto de huella de carbono**.
 
 
 
@@ -16,6 +16,8 @@ EcoPlan SQL es una herramienta de CLI (Command Line Interface) diseñada para de
 
 * **TypeScript / Node.js** - Núcleo de procesamiento.
 * **Angular 21** - EL dashboard web
+
+### [Visita EcoPlan-SQL Online](https://fabocv.github.io/EcoPlan-SQL/)
 
 ## Instalación
 
