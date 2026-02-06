@@ -34,7 +34,7 @@
         (input)="setExplain($any($event.target).value)"
         class="w-full h-64 p-6 font-mono text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-500
         transition-all outline-none resize-none mb-0"
-        placeholder="Pega aquí tu salida de EXPLAIN ANALYZE..."></textarea>
+        placeholder="Pega aquí tu salida de EXPLAIN (ANALYZE, VERBOSE, BUFFERS) tu_query_pesada"></textarea>
       
       <div class=" right-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
         {{ ecoModel().explain.length || 0 }} / 10.000
@@ -176,4 +176,36 @@
       </div>
     </footer>
   </main>
+</div>
+
+<div class="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-3 w-full max-w-md px-4 bg-white">
+  @for (toast of toastService.toasts(); track toast.id) {
+    <div 
+      [class]="{
+        'bg-red-50 border-red-200 text-red-800 shadow-red-100': toast.type === 'error',
+        'bg-amber-50 border-amber-200 text-amber-800 shadow-amber-100': toast.type === 'warning',
+        'bg-blue-50 border-blue-200 text-blue-800 shadow-blue-100': toast.type === 'info'
+      }"
+      class="flex items-center p-4 rounded-2xl border shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-300"
+    >
+      <div class="mr-3">
+        @if (toast.type === 'error') { ⚠️ }
+        @else if (toast.type === 'warning') { 💡 }
+        @else { ℹ️ }
+      </div>
+
+      <div class="flex-1 text-sm font-semibold tracking-tight">
+        {{ toast.message }}
+      </div>
+
+      <button 
+        (click)="toastService.remove(toast.id)" 
+        class="ml-4 p-1 hover:bg-black/5 rounded-full transition-colors"
+      >
+        <svg class="w-4 h-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+  }
 </div>
