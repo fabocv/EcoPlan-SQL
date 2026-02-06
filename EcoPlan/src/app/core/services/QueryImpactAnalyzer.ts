@@ -47,9 +47,6 @@ export class QueryImpactAnalyzer {
     const rowsReturned = this.extractRowsReturned(planText);
     
     const rates = CLOUD_RATES[provider];
-    
-    // Artesanía Técnica: Si no hay buffers reales, estimamos el tráfico de I/O
-    // basado en el volumen de filas procesadas para evitar costos de $0.
     const estimatedBuffers = buffers > 0 ? buffers : Math.ceil((rowsReturned + rowsRemoved) / 10);
 
     const workersPlanned = parseInt(planText.match(/Workers Planned: (\d+)/)?.[1] || '0');
