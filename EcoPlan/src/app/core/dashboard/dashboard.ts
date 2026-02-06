@@ -4,8 +4,9 @@ import { FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
+import { SmartAnalysisResult } from '../services/ImpactTreeManager';
 
-const CURRENT_VERSION = "V0.6.1"
+const CURRENT_VERSION = "V0.8"
 interface EcoData {
   explain: string;
   cloud: CloudProvider;
@@ -29,7 +30,7 @@ export class Dashboard {
   toastService = inject(ToastService);
   planText = signal("{text:''}");
   cloud = signal<CloudProvider>("AWS");
-  analisis = signal<AnalysisResult>(voidAnalysis)
+  analisis = signal<SmartAnalysisResult | null>(null)
   ecoModel = signal<EcoData>({
     explain: '',
     cloud: 'AWS',
@@ -63,6 +64,34 @@ export class Dashboard {
     this.validarRango();
   }
 
+  procesarPlan() {
+    const { explain, cloud, frequency } = this.ecoModel();
+
+    // Sanitización básica
+    const cleanText = explain.trim();
+
+    if (cleanText.length < 10 || !cleanText.toLowerCase().includes('cost=')) {
+      this.isInvalidFormat.set(true);
+      return;
+    }
+
+    this.isInvalidFormat.set(false);
+    
+    // El servicio ahora devuelve el objeto con el ImpactTree
+    const resultado = this.servicio.analyze(cleanText, cloud, frequency);
+    
+    // Actualizamos el signal con la nueva estructura
+    this.analisis.set(resultado); 
+  }
+
+  // Helper para el HTML: Obtener color según el valor (0 a 1)
+  getImpactColor(value: number): string {
+    if (value > 0.7) return 'bg-red-500';
+    if (value > 0.4) return 'bg-amber-500';
+    return 'bg-emerald-500';
+  }
+
+
   calcular() {
     this.validarRango();
     const rawText = this.ecoModel().explain;
@@ -79,7 +108,7 @@ export class Dashboard {
 
     if (!isValid) {
       this.isInvalidFormat.set(true);
-      this.analisis.set(voidAnalysis);
+      this.analisis.set(null);
       return;
     }
 
@@ -104,7 +133,7 @@ export class Dashboard {
   }
 
   analisisCorrecto(): boolean {
-    return this.analisis().executionTimeMs > 0;
+    return !!this.analisis();
   }
 
 

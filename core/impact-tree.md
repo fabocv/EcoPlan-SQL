@@ -42,12 +42,12 @@ $$Value = \text{clamp}\left(\frac{\log_2(\text{actual\_value})}{\log_2(\text{cri
 Para evitar que un valor bajo "maquille" un problema grave, el padre calcula su valor así:
 
 ```typescript
-function calculateNodeValue(node: ImpactNode): number {
+function resolve(node: ImpactNode): number {
   if (!node.children || node.children.length === 0) return node.value;
   
   const totalWeight = node.children.reduce((acc, child) => acc + child.weight, 0);
   const weightedSum = node.children.reduce((acc, child) => 
-    acc + (calculateNodeValue(child) * child.weight), 0);
+    acc + (resolve(child) * child.weight), 0);
     
   return weightedSum / totalWeight;
 }

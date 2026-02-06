@@ -2,6 +2,7 @@
 
 import { Injectable } from "@angular/core";
 import { text } from "stream/consumers";
+import { ImpactNode, ImpactTreeManager, SmartAnalysisResult } from "./ImpactTreeManager";
 
 /**
  * Tipos de Nube Soportados
@@ -21,6 +22,73 @@ export interface AnalysisResult {
   provider: CloudProvider;
 }
 
+interface RawMetrics {
+  executionTime: number;
+  planningTime: number;
+  jitTime: number;
+  batches: number;
+  hasDiskSort: boolean;
+  tempFilesMb: number;
+  totalBuffersRead: number;
+  wasteRatio: number;
+  isCartesian: boolean;
+  workers: number;
+  recursiveDepth: number;
+  maxLoops: number;
+}
+
+interface SuggestionTemplate {
+  id: string;
+  text: string;
+  solution: string;
+  triggerNodes: string[]; // IDs de nodos que activan esta sugerencia
+  minImpact: number;      // Umbral (0-1) para activarse
+  severity: 'low' | 'medium' | 'high' | 'critical';
+}
+
+const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
+  {
+    id: 'NESTED_LOOP_BOMB',
+    text: "Detección de bucle anidado ineficiente (Nested Loop).",
+    solution: "Faltan condiciones de igualdad en el JOIN o índices en las llaves foráneas. El motor está haciendo un producto cartesiano.",
+    triggerNodes: ['complexity', 'waste'],
+    minImpact: 0.8,
+    severity: 'critical'
+  },
+  {
+    id: 'WORK_MEM_LIMIT',
+    text: "El motor está usando el disco para ordenar o cruzar datos.",
+    solution: "Incrementar 'work_mem'. Valor sugerido: {val}.",
+    triggerNodes: ['mem', 'io'],
+    minImpact: 0.6,
+    severity: 'critical'
+  },
+  {
+    id: 'WASTE_FILTER',
+    text: "Se están descartando demasiadas filas mediante filtros post-lectura.",
+    solution: "Crear un índice compuesto que incluya las columnas del WHERE.",
+    triggerNodes: ['waste'],
+    minImpact: 0.5,
+    severity: 'high'
+  },
+  {
+    id: 'CARTESIAN_RISK',
+    text: "Detección de Producto Cartesiano o Join ineficiente.",
+    solution: "Revisar las condiciones del JOIN; faltan llaves foráneas en el filtro.",
+    triggerNodes: ['complexity'],
+    minImpact: 0.9,
+    severity: 'critical'
+  },
+  {
+    id: 'LOOP_EXPLOSION',
+    text: "Detección de bucles excesivos (Loops > 100k).",
+    solution: "El optimizador eligió un Nested Loop ineficiente. Considera forzar un Hash Join o añadir índices para convertir los Scans en Index Seeks.",
+    triggerNodes: ['complexity'],
+    minImpact: 0.8,
+    severity: 'critical'
+  }
+];
+
 export const voidAnalysis: AnalysisResult = {
   executionTimeMs: 0,
   economicImpact: 0,
@@ -39,42 +107,230 @@ const CLOUD_RATES: Record<CloudProvider, CloudPricing> = {
   providedIn: 'root'
 })
 export class QueryImpactAnalyzer {
-  
-  public analyze(planText: string, provider: CloudProvider = 'AWS', frequencyPerDay: number = 1000): AnalysisResult {
-    const timeMs = this.extractExecutionTime(planText);
-    const buffers = this.extractBuffers(planText);
-    const rowsRemoved = this.extractRowsRemoved(planText);
-    const rowsReturned = this.extractRowsReturned(planText);
+
+  private treeManager = new ImpactTreeManager();
+
+  public analyze(plan: string, provider: CloudProvider = 'AWS', frequency: number = 1000): SmartAnalysisResult {
+    // 1. Extraer métricas crudas (Raw Metrics)
+    const metrics = this.extractAllMetrics(plan);
     
-    const rates = CLOUD_RATES[provider];
-    const estimatedBuffers = buffers > 0 ? buffers : Math.ceil((rowsReturned + rowsRemoved) / 10);
-
-    const workersPlanned = parseInt(planText.match(/Workers Planned: (\d+)/)?.[1] || '0');
-    const workersLaunched = parseInt(planText.match(/Workers Launched: (\d+)/)?.[1] || '0');
-
-    // Si hay paralelismo, el costo de cómputo debería escalar
-    // El proceso líder + los workers lanzados
-    const totalCPUs = 1 + workersLaunched;
+    // 2. Construir el Árbol de Impacto
+    const impactTree = this.buildTree(metrics);
+    
+    // 3. Calcular Score y Costos
+    const totalImpact = this.treeManager.resolve(impactTree);
+    const efficiencyScore = Math.max(0, 100 - (totalImpact * 100));
+    
+    const executionTimeMs = metrics.executionTime;
     const rate = CLOUD_RATES[provider];
-    // 2. Costo de Ejecución Única (UNITARIO)
-    const computeCost = timeMs * rate.computeUnitCostPerMs * totalCPUs;
-    const ioCost = estimatedBuffers * rate.ioCostPerBuffer;
-    const costPerExecution = computeCost + ioCost;
+    const baseCost = (executionTimeMs * rate.computeUnitCostPerMs) * (1 + metrics.workers);
+    const economicImpact = baseCost * frequency;
 
-    // 3. Impacto Mensual (PROYECCIÓN)
-    // Usamos la frecuencia que viene por parámetro (ej. 1000 veces al día)
-    const monthlyImpact = costPerExecution * frequencyPerDay * 30;
+    // 4. Generar Sugerencias Basadas en el Árbol
+    const topOffenders = this.treeManager.getTopOffenders(impactTree);
+    const suggestions = this.generateSmartSuggestions(topOffenders, metrics);
 
-    const suggestions: {list: string[], solucion: string[]} = this.generateSuggestions(planText, timeMs, rowsRemoved, rowsReturned);
-    
     return {
-      executionTimeMs: timeMs,
-      economicImpact: parseFloat(monthlyImpact.toFixed(2)),
+      executionTimeMs,
+      economicImpact,
+      efficiencyScore,
+      provider,
+      impactTree,
+      topOffenders,
       suggestions,
-      efficiencyScore: this.calculateEfficiency(timeMs, rowsRemoved, rowsReturned, planText),
-      provider: provider
+      breakdown: this.generateBreakdown(impactTree)
     };
   }
+
+  private extractAllMetrics(plan: string): RawMetrics {
+    // 1. Tiempos (ms)
+    const execTime = this.parseFloatFromRegex(plan, /Execution [Tt]ime: ([\d.]+)/) || 0;
+    const planTime = this.parseFloatFromRegex(plan, /Planning [Tt]ime: ([\d.]+)/) || 0;
+    
+    // 2. JIT (Just In Time Compilation) - Impacto en CPU
+    const jitTime = this.parseFloatFromRegex(plan, /JIT:[\s\S]*?Total: ([\d.]+)/) || 0;
+
+    // 3. Memoria (Batches y Sorts)
+    const hashData = this.extractHashMetrics(plan);
+    const hasDiskSort = plan.includes('Sort Method: external merge');
+    const tempFilesMatch = plan.match(/Disk: (\d+)kB/);
+    const tempFilesMb = tempFilesMatch ? parseInt(tempFilesMatch[1]) / 1024 : 0;
+
+    // 4. I/O (Buffers)
+    const sharedRead = this.parseFloatFromRegex(plan, /shared read=(\d+)/) || 0;
+    const localRead = this.parseFloatFromRegex(plan, /local read=(\d+)/) || 0;
+
+    // 5. Escalabilidad (Waste Ratio)
+    // Buscamos "Rows Removed by Filter" vs "rows="
+
+    const rowsRemovedFilter = this.sumAllMatches(plan, /Rows Removed by Filter: (\d+)/);
+    const rowsRemovedJoin = this.sumAllMatches(plan, /Rows Removed by Join Filter: (\d+)/);
+    const totalWaste = rowsRemovedFilter + rowsRemovedJoin;
+
+    const rowsReturned = this.parseFloatFromRegex(plan, /actual time=[\d.]+..[\d.]+ rows=(\d+)/) || 1;
+    const wasteRatio = totalWaste / (totalWaste + rowsReturned || 1);
+
+    const maxLoops = Math.max(...[...plan.matchAll(/loops=(\d+)/g)].map(m => parseInt(m[1])));
+
+    // 6. Paralelismo y Complejidad
+    const workersPlanned = this.parseFloatFromRegex(plan, /Workers Planned: (\d+)/) || 0;
+    const isCartesian = plan.includes('Join Filter:') && plan.includes('loops=');
+
+    return {
+      executionTime: execTime,
+      planningTime: planTime,
+      jitTime,
+      batches: hashData?.batches || 1,
+      hasDiskSort,
+      tempFilesMb,
+      totalBuffersRead: sharedRead + localRead,
+      wasteRatio: wasteRatio,
+      isCartesian,
+      workers: workersPlanned,
+      recursiveDepth: (plan.match(/Recursive Union/g) || []).length,
+      maxLoops: maxLoops
+    };
+  }
+
+  /** * Helpers de extracción 
+   */
+  private parseFloatFromRegex(text: string, regex: RegExp): number {
+    const match = text.match(regex);
+    return match ? parseFloat(match[1]) : 0;
+  }
+
+  private sumAllMatches(text: string, regex: RegExp): number {
+    const matches = [...text.matchAll(new RegExp(regex, 'g'))];
+    return matches.reduce((acc, m) => acc + parseInt(m[1]), 0);
+  }
+
+  private generateSmartSuggestions(topOffenders: ImpactNode[], metrics: RawMetrics): 
+    {list: string[], solucion: string[]} {
+    const list: string[] = [];
+    const solucion: string[] = [];
+
+    // 1. Iterar sobre nuestra base de conocimientos
+    for (const template of SUGGESTION_LIBRARY) {
+      // 2. Buscar si alguno de los topOffenders coincide con los triggers de esta sugerencia
+      const activeTrigger = topOffenders.find(offender => 
+        template.triggerNodes.includes(offender.id) && offender.value >= template.minImpact
+      );
+
+      if (activeTrigger) {
+        // 3. Calcular la importancia relativa para la narrativa
+        const impactPercentage = Math.round(activeTrigger.value * 100);
+        
+        // 4. Personalizar el texto de solución si es necesario (ej: memoria)
+        let customSolution = template.solution;
+        if (template.id === 'WORK_MEM_LIMIT') {
+          customSolution = customSolution.replace('{val}', this.calculateNeededWorkMem(metrics.batches, 4096)); // 4MB default
+        }
+
+        // 5. Construir el mensaje con trazabilidad
+        list.push(`[${template.severity.toUpperCase()}] ${template.text} (Basado en ${impactPercentage}% de impacto en ${activeTrigger.label})`);
+        solucion.push(customSolution);
+      }
+    }
+
+    return { list, solucion };
+  }
+
+  // Esquema conceptual de la construcción
+  private buildTree(metrics: any): ImpactNode {
+    const manager = new ImpactTreeManager();
+
+    const root: ImpactNode = {
+      id: 'query_impact',
+      label: 'Query Impact Total',
+      weight: 1,
+      value: 0,
+      children: [
+        {
+          id: 'perf',
+          label: 'Performance Impact',
+          weight: 0.5,
+          value: 0,
+          children: [
+            { 
+              id: 'cpu', 
+              label: 'CPU Pressure', 
+              weight: 0.4, 
+              value: manager.logNormalize(metrics.executionTime, 5000) 
+            },
+            { 
+              id: 'mem', 
+              label: 'Memory Pressure', 
+              weight: 0.3, 
+              value: metrics.hasDiskSort ? 1 : manager.logNormalize(metrics.batches, 64) 
+            },
+            { 
+              id: 'io', 
+              label: 'I/O Pressure', 
+              weight: 0.3, 
+              value: manager.logNormalize(metrics.tempFilesMb, 100) 
+            }
+          ]
+        },
+        {
+          id: 'scalability',
+          label: 'Scalability Risk',
+          weight: 0.4,
+          value: 0,
+          children: [
+            { 
+              id: 'waste', 
+              label: 'Data Waste', 
+              weight: 0.7, 
+              value: metrics.wasteRatio > 0.5 ? manager.logNormalize(metrics.wasteRatio * 100, 100) : metrics.wasteRatio 
+            },
+            { 
+              id: 'complexity', 
+              label: 'Structural Complexity', 
+              weight: 0.4, 
+              // Si hay Join Filter o loops > 1000, es riesgo estructural
+              value: Math.max(
+                metrics.isCartesian ? 1 : 0, 
+                manager.logNormalize(metrics.maxLoops, 100000) // 100k loops es el umbral de pánico (1.0)
+              )
+            },
+            { 
+              id: 'parallel', 
+              label: 'Worker Dependency', 
+              weight: 0.4, 
+              value: metrics.workers > 2 ? 0.8 : 0 
+            }
+          ]
+        },
+        {
+          id: 'eco',
+          label: 'Eco Impact',
+          weight: 0.2,
+          value: 0,
+          // El valor de Eco se deriva de la intensidad de CPU e I/O
+          children: [
+            { id: 'carbon', label: 'Carbon Footprint', weight: 1, value: 0 } 
+          ]
+        }
+      ]
+    };
+
+    manager.resolve(root); // Calcula todos los niveles
+    return root;
+  }
+
+  private generateBreakdown(root: ImpactNode): string {
+    // Obtenemos los 3 grandes pilares
+    const perf = root.children?.find(c => c.id === 'perf');
+    const scal = root.children?.find(c => c.id === 'scalability');
+    const eco = root.children?.find(c => c.id === 'eco');
+
+    const main = [perf, scal, eco].sort((a, b) => (b?.value || 0) - (a?.value || 0))[0];
+
+    if (!main || main.value < 0.2) return "La consulta está bien optimizada.";
+
+    return `Análisis de Causa Raíz: El ${(main.value * 100).toFixed(0)}% del impacto total se concentra en ${main.label}.`;
+  }
+    
 
   private extractExecutionTime(text: string): number {
     // Regex flexible para "Execution time" o "Execution Time"

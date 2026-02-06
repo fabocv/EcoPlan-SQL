@@ -38,7 +38,7 @@ export class ImpactTreeManager {
   /**
    * Calcula el valor de un nodo basado en sus hijos (Weighted Average)
    */
-  public calculateNodeValue(node: ImpactNode): number {
+  public resolve(node: ImpactNode): number {
     if (!node.children || node.children.length === 0) {
       return node.value;
     }
@@ -47,7 +47,7 @@ export class ImpactTreeManager {
     if (totalWeight === 0) return 0;
 
     const weightedSum = node.children.reduce((acc, child) => {
-      return acc + (this.calculateNodeValue(child) * child.weight);
+      return acc + (this.resolve(child) * child.weight);
     }, 0);
 
     node.value = weightedSum / totalWeight;
