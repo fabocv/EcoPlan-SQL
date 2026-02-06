@@ -3,6 +3,7 @@ import { CloudProvider, QueryImpactAnalyzer, AnalysisResult, voidAnalysis } from
 import { FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
+import { ToastService } from '../services/toast.service';
 
 interface EcoData {
   explain: string;
@@ -22,8 +23,9 @@ interface EcoData {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Dashboard {
-  version = "v0.5.1";
+  version = "v0.6";
   servicio = inject(QueryImpactAnalyzer)
+  toastService = inject(ToastService);
   planText = signal("{text:''}");
   cloud = signal<CloudProvider>("AWS");
   analisis = signal<AnalysisResult>(voidAnalysis)
@@ -48,11 +50,16 @@ export class Dashboard {
   }
 
   setExplain( raw: string ) {
+    if (raw.length>10000) {
+      raw = raw.slice(0,10000);
+      this.toastService.show('Plan demasiado largo para el baseline.', 'warning');
+    }
     this.ecoModel.update(f => ({ ...f, explain:raw }));
   }
 
   setFrecuency( raw: number ) {
     this.ecoModel.update(f => ({ ...f, frequency:raw }));
+    this.validarRango();
   }
 
   calcular() {
@@ -83,9 +90,11 @@ export class Dashboard {
 
   validarRango() {
     let valor = Math.floor(this.ecoModel().frequency); // Asegurar entero
-    
-    if (!valor || valor < 1) valor = 1;
-    if (valor > 2000000) valor = 2000000;
+    let showToast = false
+    if (!valor || valor < 1) {valor = 1; showToast = true}
+    if (valor > 2000000) {valor = 2000000; showToast = true}
+
+    if (showToast) this.toastService.show('Frecuencia debe estar en el rango 1 a 2 millones.', 'warning');
     
     this.ecoModel.update(f => ({
       ...f,
