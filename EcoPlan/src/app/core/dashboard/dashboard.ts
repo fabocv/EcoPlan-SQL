@@ -5,6 +5,7 @@ import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
 
+const CURRENT_VERSION = "V0.6.1"
 interface EcoData {
   explain: string;
   cloud: CloudProvider;
@@ -23,7 +24,7 @@ interface EcoData {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Dashboard {
-  version = "v0.6";
+  version = CURRENT_VERSION;
   servicio = inject(QueryImpactAnalyzer)
   toastService = inject(ToastService);
   planText = signal("{text:''}");
