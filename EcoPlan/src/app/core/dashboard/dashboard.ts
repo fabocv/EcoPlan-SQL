@@ -6,7 +6,7 @@ import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
 import { SmartAnalysisResult } from '../services/ImpactTreeManager';
 
-const CURRENT_VERSION = "V0.8.4"
+const CURRENT_VERSION = "v0.8"
 interface EcoData {
   explain: string;
   cloud: CloudProvider;

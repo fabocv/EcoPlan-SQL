@@ -58,6 +58,14 @@ const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     severity: 'critical'
   },
   {
+    id: 'JSONB_OPTIMIZATION',
+    text: "Acceso ineficiente a campos JSONB detectado.",
+    solution: "Estás filtrando por una llave JSON (->>). El motor debe parsear cada documento en cada fila. Considera crear un índice funcional o un índice GIN: 'CREATE INDEX idx_name ON table ((col->>\"key\"));'",
+    triggerNodes: ['waste', 'complexity'],
+    minImpact: 0.7,
+    severity: 'critical'
+  },
+  {
     id: 'WORK_MEM_LIMIT',
     text: "El motor está usando el disco para ordenar o cruzar datos.",
     solution: "Incrementar 'work_mem'. Valor sugerido: {val}.",
@@ -138,7 +146,7 @@ export class QueryImpactAnalyzer {
 
     // 4. Generar Sugerencias Basadas en el Árbol
     const topOffenders = this.treeManager.getTopOffenders(impactTree);
-    const suggestions = this.generateSmartSuggestions(topOffenders, metrics);
+    const suggestions = this.generateSmartSuggestions(topOffenders, metrics, plan);
 
     return {
       executionTimeMs,
@@ -254,34 +262,120 @@ export class QueryImpactAnalyzer {
     return matches.reduce((acc, m) => acc + parseInt(m[1]), 0);
   }
 
-  private generateSmartSuggestions(topOffenders: ImpactNode[], metrics: RawMetrics): 
+  private generateSmartSuggestions(topOffenders: ImpactNode[], metrics: RawMetrics, plan: string): 
     {list: string[], solucion: string[]} {
     const list: string[] = [];
     const solucion: string[] = [];
+    const planUpper = plan.toUpperCase();
 
-    // 1. Iterar sobre nuestra base de conocimientos
+    const isRecursive = planUpper.includes('RECURSIVE UNION');
+    const hasJoinInPlan = planUpper.includes('JOIN');
+    const isNestedLoop = planUpper.includes('NESTED LOOP');
+
+    const plannedWorkers = parseInt(plan.match(/Workers Planned: (\d+)/)?.[1] || "0");
+    const launchedWorkers = parseInt(plan.match(/Workers Launched: (\d+)/)?.[1] || "0");
+    // Paralelismo fantasma
+    if (plannedWorkers > 0 && launchedWorkers === 0) {
+      list.push("[CRITICAL] Fallo total de paralelismo (Resource Contention).");
+      solucion.push("El optimizador planeó workers pero el sistema no pudo iniciarlos. Revisa 'max_parallel_workers' o la carga de CPU del servidor; la consulta se ejecutó de forma secuencial.");
+    } else if (launchedWorkers < plannedWorkers) {
+      list.push("[WARNING] Paralelismo degradado.");
+      solucion.push(`Se iniciaron solo ${launchedWorkers} de ${plannedWorkers} workers planeados. La consulta es más lenta de lo esperado por falta de recursos disponibles.`);
+    }
+    // 1. Manejo de Recursión
+    if (isRecursive) {
+      const hasSeqScan = planUpper.includes('SEQ SCAN');
+      list.push("[CRITICAL] Recursión profunda detectada (Recursive Union).");
+      solucion.push(hasSeqScan 
+        ? "La recursión realiza Seq Scans en cada iteración. ¡Indiza las llaves foráneas de la jerarquía inmediatamente!" 
+        : "Revisa la condición de parada de la CTE; la profundidad está generando una carga excesiva.");
+    }
+
+    // 2. Manejo de Nested Loop (Solo si no es recursión, para evitar ruido)
+    if (isNestedLoop && !isRecursive && metrics.maxLoops > 100) {
+      list.push("[CRITICAL] Detección de bucle anidado ineficiente (Nested Loop).");
+      solucion.push("Faltan condiciones de igualdad en el JOIN o índices. El motor está haciendo un producto cartesiano.");
+    }
+
+    
+
+    // --- PARTE B: LIBRERÍA DE CONOCIMIENTOS (BASADA EN ÁRBOL) ---
     for (const template of SUGGESTION_LIBRARY) {
-      // 2. Buscar si alguno de los topOffenders coincide con los triggers de esta sugerencia
+
+      // 1. Sugerencias con nested duplicados las saltamos.
+      const isDuplicateNested = (template.text.includes('Nested Loop') || template.id.includes('NESTED_LOOP')) 
+                             && list.some(item => item.includes('Nested Loop'));
+                             
+      if (isDuplicateNested) continue;
+
+      // 2. Filtro de Producto Cartesiano redundante
+      if (template.id === 'CARTESIAN_RISK' && list.some(item => item.includes('producto cartesiano'))) {
+        continue;
+      }
+
+      // si hay operadores de JsonB
+      const esJsonSugerencia = template.id === 'JSONB_OPTIMIZATION';
+      const tieneOperadorJson = plan.includes('->>') || plan.includes('@>');
+      
+      if (esJsonSugerencia && !tieneOperadorJson) {
+        continue; 
+      }
+
+      // 3. Si hay un Nested Loop REAL, silenciamos la alerta de recursión de la librería
+      if (planUpper.includes('NESTED LOOP') && template.id === 'RECURSIVE_EXPLOSION') {
+        continue;
+      }
+
+      // 4. Si detectamos Producto Cartesiano (#4), silenciamos las alertas genéricas de Loop (#5) 
+      // para no repetir el "Nested Loop ineficiente" tres veces.
+      if (template.id === 'LOOP_EXPLOSION' && list.some(i => i.includes('Cartesiano'))) {
+        continue;
+      }
+
+      // 5. Si la sugerencia menciona Join/Loop pero el plan es un Scan simple
+      const mencionaJoin = template.text.includes('Nested Loop') || template.text.includes('JOIN') ||
+        template.id.includes('LOOP');
+      if (mencionaJoin && !hasJoinInPlan) {
+        continue; 
+      }
+
+      if (isRecursive && (template.id === 'RECURSIVE_EXPLOSION' || template.id === 'NESTED_LOOP_GENERIC')) continue;
+      if (isNestedLoop && template.id === 'NESTED_LOOP_GENERIC') continue;
+
+      if (isRecursive && (
+        template.id.includes('LOOP') || 
+        template.text.includes('bucle') || 
+        template.text.includes('Nested')
+      )) {
+        continue; 
+      }
+
+      if (template.id === 'NESTED_LOOP_GENERIC' && !planUpper.includes('JOIN')) {
+        continue; // Si no hay JOIN en el texto, no culparemos al Nested Loop por el desperdicio
+      }
+
       const activeTrigger = topOffenders.find(offender => 
         template.triggerNodes.includes(offender.id) && offender.value >= template.minImpact
       );
 
       if (activeTrigger) {
-        // 3. Calcular la importancia relativa para la narrativa
         const impactPercentage = Math.round(activeTrigger.value * 100);
-        
-        // 4. Personalizar el texto de solución si es necesario (ej: memoria)
         let customSolution = template.solution;
+        
         if (template.id === 'WORK_MEM_LIMIT') {
-          customSolution = customSolution.replace('{val}', this.calculateNeededWorkMem(metrics.batches, 4096)); // 4MB default
+          customSolution = customSolution.replace('{val}', this.calculateNeededWorkMem(metrics.batches, 4096));
         }
 
-        // 5. Construir el mensaje con trazabilidad
         list.push(`[${template.severity.toUpperCase()}] ${template.text} (Basado en ${impactPercentage}% de impacto en ${activeTrigger.label})`);
         solucion.push(customSolution);
       }
     }
 
+    // 3. Caso: Data Waste (Filtrado ineficiente)
+    if (metrics.wasteRatio > 0.7 && !list.some(i => i.includes('Filtrado'))) {
+      list.push("[HIGH] Filtrado ineficiente de datos.");
+      solucion.push("Se leen demasiadas filas para luego descartarlas. Crea un índice compuesto que incluya las columnas del WHERE.");
+    }
     return { list, solucion };
   }
 
@@ -462,7 +556,6 @@ export class QueryImpactAnalyzer {
 
     const isCartesian = text.includes('Nested Loop') && text.includes('Join Filter') && removed > 1000000;
     const joinFilter = text.match(/Join Filter: \((.+)\)/)?.[1] || "";
-    const isEquality = joinFilter.includes('=');
     const hasInequality = joinFilter.includes('>') || joinFilter.includes('<');
     const filterCols = this.extractFilterColumns(text);
     

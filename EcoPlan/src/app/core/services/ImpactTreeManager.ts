@@ -47,11 +47,13 @@ export class ImpactTreeManager {
     const totalWeight = node.children.reduce((acc, child) => acc + child.weight, 0);
     if (totalWeight === 0) return 0;
 
-    const weightedSum = node.children.reduce((acc, child) => {
-      return acc + (this.resolve(child) * child.weight);
-    }, 0);
+    const weightedAverage = node.children.reduce((acc, child) => {
+    return acc + (this.resolve(child) * child.weight);
+  }, 0) / (totalWeight || 1);
 
-    node.value = weightedSum / totalWeight;
+    const maxValue = Math.max(...node.children.map(c => c.value));
+
+    node.value = (weightedAverage * 0.4) + (maxValue * 0.6);
     return node.value;
   }
 
