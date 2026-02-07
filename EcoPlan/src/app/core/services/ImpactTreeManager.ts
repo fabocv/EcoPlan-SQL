@@ -6,6 +6,7 @@ export interface ImpactNode {
   value: number;        // 0.0 a 1.0 (normalizado)
   weight: number;       // Peso relativo frente a sus hermanos
   children?: ImpactNode[];
+  isCritical?: boolean;
   description?: string; // Para explicar el "porqué" al usuario
 }
 
@@ -53,7 +54,14 @@ export class ImpactTreeManager {
 
     const maxValue = Math.max(...node.children.map(c => c.value));
 
-    node.value = (weightedAverage * 0.4) + (maxValue * 0.6);
+    const criticalValues = node.children
+    .filter(c => c.isCritical)
+    .map(c => c.value);
+  
+    const maxCritical = criticalValues.length > 0 ? Math.max(...criticalValues) : 0;
+
+    const precalculo = (weightedAverage * 0.4) + (maxValue * 0.6);
+    node.value = Math.max(precalculo, maxCritical);
     return node.value;
   }
 

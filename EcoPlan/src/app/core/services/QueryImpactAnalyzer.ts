@@ -37,7 +37,21 @@ interface RawMetrics {
   recursiveDepth: number;
   maxLoops: number;
   structuralComplexityBonus: number;
+  rowsPerIteration: number;
+  seqScanInLoop: boolean,
 }
+
+/**
+ * COEFICIENTES DE INTENSIDAD ENERGÉTICA (Basados en literatura de Green IT)
+ * Ref 1: "Energy consumption in data centers", Koomey et al.
+ * Ref 2: "PostgreSQL Guide to I/O costs".
+ */
+const ENERGY_COEFFICIENTS = {
+  SHARED_HIT: 0.1,    // RAM: Muy eficiente.
+  SHARED_READ: 1.0,   // DISCO: Referencia base (1.0).
+  LOCAL_READ: 0.8,    // TEMP RAM: Memoria local de proceso, ligeramente más cara que shared.
+  TEMP_IO: 1.5        // DISCO TEMP: El swap a disco (Spill) es la operación más costosa.
+};
 
 interface SuggestionTemplate {
   id: string;
@@ -46,16 +60,62 @@ interface SuggestionTemplate {
   triggerNodes: string[]; // IDs de nodos que activan esta sugerencia
   minImpact: number;      // Umbral (0-1) para activarse
   severity: 'low' | 'medium' | 'high' | 'critical';
+  validate?: (plan: string) => boolean;
 }
 
 const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
+  {
+    id: 'PARALLEL_CRITICAL',
+    text: "Fallo total de paralelismo (Resource Contention).",
+    solution: "El optimizador planeó workers pero el sistema no pudo iniciarlos. Revisa 'max_parallel_workers' o la carga de CPU; la consulta se ejecutó de forma secuencial.",
+    triggerNodes: ['parallel'], //
+    minImpact: 0.5,
+    severity: 'critical',
+    validate: (plan: string) => {
+      const p = parseInt(plan.match(/Workers Planned: (\d+)/)?.[1] || "0");
+      const l = parseInt(plan.match(/Workers Launched: (\d+)/)?.[1] || "0");
+      return p > 0 && l === 0;
+    }
+  },
+  {
+    id: 'PARALLEL_DEGRADED',
+    text: "Paralelismo degradado.",
+    solution: "Se iniciaron menos workers de los planeados. La consulta es más lenta por falta de recursos disponibles en el sistema.",
+    triggerNodes: ['parallel'], //
+    minImpact: 0.3,
+    severity: 'medium', // Es un warning, no detiene el mundo pero avisa
+    validate: (plan: string) => {
+      const p = parseInt(plan.match(/Workers Planned: (\d+)/)?.[1] || "0");
+      const l = parseInt(plan.match(/Workers Launched: (\d+)/)?.[1] || "0");
+      return p > 0 && l > 0 && l < p;
+    }
+  },
   {
     id: 'NESTED_LOOP_BOMB',
     text: "Detección de bucle anidado ineficiente (Nested Loop).",
     solution: "Faltan condiciones de igualdad en el JOIN o índices en las llaves foráneas. El motor está haciendo un producto cartesiano.",
     triggerNodes: ['complexity', 'waste'],
     minImpact: 0.8,
-    severity: 'critical'
+    severity: 'critical',
+    validate: (plan: string) => {
+      const loopsMatch = plan.match(/loops=(\d+)/g);
+      if (!loopsMatch) return false;
+      
+      // Verificamos si algún nodo tiene más de 100 loops
+      return loopsMatch.some(m => {
+        const value = parseInt(m.split('=')[1]);
+        return value > 100;
+      });
+    }
+  },
+  {
+    id: 'RECURSIVE_BOMB',
+    text: 'Bomba de Tiempo en Recursión.',
+    solution: 'La CTE recursiva está realizando un Seq Scan sobre la tabla principal en cada paso. Crea un índice en la columna de unión para detener la degradación lineal.',
+    triggerNodes: ['recursive_expansion'],
+    minImpact: 0.7,
+    severity: 'critical',
+    validate: (plan: string) => /Recursive Union[\s\S]*?Seq Scan/.test(plan)
   },
   {
     id: 'JSONB_OPTIMIZATION',
@@ -78,8 +138,14 @@ const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     text: "Se están descartando demasiadas filas mediante filtros post-lectura.",
     solution: "Crear un índice compuesto que incluya las columnas del WHERE.",
     triggerNodes: ['waste'],
-    minImpact: 0.5,
-    severity: 'high'
+    minImpact: 0.7,
+    severity: 'high',
+    validate: (plan: string) => {
+      const isExplicitFilter = plan.includes('Filter: ') && !plan.includes('Join Filter: ');
+      const isLargeWaste = plan.includes('Rows Removed by Filter');
+      
+      return isExplicitFilter && isLargeWaste;
+    },
   },
   {
     id: 'CARTESIAN_RISK',
@@ -98,20 +164,24 @@ const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     severity: 'critical'
   },
   {
-    id: 'RECURSIVE_EXPLOSION',
-    text: "Recursión profunda detectada (Recursive Union).",
-    solution: "La CTE recursiva está realizando escaneos secuenciales en cada iteración. Asegúrate de tener un índice en la columna de unión (parent_id) para evitar el colapso del rendimiento.",
-    triggerNodes: ['complexity', 'io'], // La recursión suele disparar ambos
-    minImpact: 0.6,
-    severity: 'critical'
+    id: 'PARTIAL_INDEX',
+    text: '[HIGH] Oportunidad de Índice Parcial detectada.',
+    solution: 'Detectamos muchas filas descartadas. Crea un índice parcial: ...',
+    triggerNodes: ['waste'],
+    minImpact: 0.7,
+    severity: 'high',
+    // ESTA ES LA CLAVE: Solo se activa si hay un "Filter" (WHERE) en el plan
+    validate: (plan: string) => plan.includes('Filter: ') && !plan.includes('Join Filter: ')
   },
   {
-    id: 'PARTIAL_INDEX_OPPORTUNITY',
-    text: "Oportunidad de Índice Parcial detectada.",
-    solution: "Detectamos un Index Scan que aún descarta muchas filas. En lugar de un índice compuesto gigante, crea un índice parcial: 'CREATE INDEX idx_name ON table (priority) WHERE (status = 'error');'. Esto reducirá el tamaño del índice en un 99%.",
-    triggerNodes: ['waste'],
-    minImpact: 0.7, // Solo si el desperdicio es alto
-    severity: 'high'
+    id: 'JOIN_EXPLOSION',
+    text: 'Join no selectivo / Explosión combinatoria.',
+    solution: 'El JOIN actual genera un producto cartesiano o un bucle ineficiente. Añade condiciones de igualdad o índices en las llaves foráneas.',
+    triggerNodes: ['waste', 'complexity'],
+    minImpact: 0.8,
+    severity: 'critical',
+    // Solo se activa si hay "Join Filter" o "Nested Loop"
+    validate: (plan: string) => plan.includes('Join Filter') || plan.includes('Nested Loop')
   },
   {
     id: 'PARTITION_PRUNING_FAIL',
@@ -119,7 +189,8 @@ const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     solution: "PostgreSQL está escaneando particiones irrelevantes (ej. meses anteriores). Asegúrate de que la columna de partición esté en el WHERE y que no existan funciones que impidan el pruning, como 'date_trunc()'.",
     triggerNodes: ['waste', 'structural'],
     minImpact: 0.8,
-    severity: 'critical'
+    severity: 'critical',
+    validate: (plan: string) => plan.toLowerCase().includes('partition')
   }
 ];
 
@@ -150,19 +221,88 @@ export class QueryImpactAnalyzer {
     
     // 2. Construir el Árbol de Impacto
     const impactTree = this.buildTree(metrics);
+
+    // allNodes: Es la versión plana del árbol para poder buscar nodos por ID fácilmente.
+    const allNodes = this.treeManager.flatten(impactTree);
+    console.table(allNodes.map(n => ({ id: n.id, value: n.value })));
+
+    let suggestion = SUGGESTION_LIBRARY;
+
+    let suggestionLib = suggestion.filter(s => {
+        // A. ¿El impacto es suficiente?
+        const isTriggered = s.triggerNodes.some(id => {
+            const node = allNodes.find(n => n.id === id);
+            return node && node.value >= s.minImpact;
+        });
+
+        // B. ¿El contexto es el correcto? (AQUÍ SE MATA EL WASTE_FILTER)
+        const isValidContext = s.validate ? s.validate(plan) : true;
+
+        return isTriggered && isValidContext;
+    });
+
+    suggestionLib.sort((a, b) => {
+        const priority = { 'critical': 0, 'high': 1, 'medium': 2, 'low': 3 };
+        return priority[a.severity] - priority[b.severity];
+    });
+
+    const hierarchy = ['recursive_expansion', 'complexity', 'waste', 'parallel'];
+
+    const criticalNodes = allNodes.filter(n => n.value >= 0.7 && hierarchy.includes(n.id));
+
+    if (criticalNodes.length > 0) {
+      // 2. Filtramos la librería para que solo contenga sugerencias de esos nodos
+      suggestionLib = suggestionLib.filter(s => 
+          s.triggerNodes.some(tId => criticalNodes.some(cn => cn.id === tId))
+      );
+
+      // 3. Limitamos a las top 3 para no saturar
+      // Pero permitimos que convivan si vienen de problemas distintos
+      if (suggestionLib.length > 3) {
+          suggestionLib = suggestionLib.slice(0, 3);
+      }
+    }
+
+    const dominantNodeId = hierarchy.find(nodeId => {
+      const node = allNodes.find(n => n.id === nodeId);
+      return node && node.value >= 0.7; // Umbral de "Desastre"
+    });
+
+    if (dominantNodeId) {
+      // Si hay un nodo dominante (ej. complexity), 
+      // filtramos para quedarnos SOLO con las sugerencias de ese nivel.
+      suggestionLib = suggestionLib.filter(c => c.triggerNodes.includes(dominantNodeId));
+      
+      // Si hay varias dentro del mismo nivel que son redundantes (como tus dos CRITICAL)
+      // nos quedamos solo con la primera.
+      if (suggestionLib.length > 1) {
+          suggestionLib = [suggestionLib[0]]; 
+      }
+    }
     
     // 3. Calcular Score y Costos
     const totalImpact = this.treeManager.resolve(impactTree);
-    const efficiencyScore = Math.max(0, 100 - (totalImpact * 100));
+    const rawEfficiencyScore = Math.max(0, 100 - (totalImpact * 100));
+
+    const confidence = metrics.execTimeInExplain ? (metrics.totalBuffersRead > 0 ? 1.0 : 0.8) : 0.5;
+
+    const efficiencyScore = parseFloat((rawEfficiencyScore * confidence).toFixed(2));
     
     const executionTimeMs = metrics.executionTime;
     const rate = CLOUD_RATES[provider];
+    const wasteMultiplier = 1 + (allNodes.find(n => n.id === 'waste')?.value || 0) * 0.5;
+    const structuralRiskMultiplier = metrics.structuralComplexityBonus > 0.5 ? 1.3 : 1.0;
+
     const baseCost = (executionTimeMs * rate.computeUnitCostPerMs) * (1 + metrics.workers);
-    const economicImpact = baseCost * frequency;
+
+    // Aplicamos los multiplicadores al impacto económico
+    const economicImpact = baseCost * frequency * wasteMultiplier * structuralRiskMultiplier;
 
     // 4. Generar Sugerencias Basadas en el Árbol
     const topOffenders = this.treeManager.getTopOffenders(impactTree);
-    const suggestions = this.generateSmartSuggestions(topOffenders, metrics, plan);
+    const suggestions = this.generateSmartSuggestions(topOffenders, metrics, plan, suggestionLib);
+
+    
 
     return {
       executionTimeMs,
@@ -175,13 +315,6 @@ export class QueryImpactAnalyzer {
       execTimeInExplain: metrics.execTimeInExplain,
       breakdown: this.generateBreakdown(impactTree)
     };
-  }
-
-  private hasRecursiveUnion(plan: string): boolean {
-    const isRecursive = plan.includes('Recursive Union');
-    const hasSeqScanInRecursion = /Recursive Union[\s\S]*?Seq Scan/.test(plan);
-
-    return isRecursive && hasSeqScanInRecursion;
   }
 
   private extractAllMetrics(plan: string): RawMetrics {
@@ -225,7 +358,21 @@ export class QueryImpactAnalyzer {
 
     // 4. I/O (Buffers)
     const sharedRead = this.parseFloatFromRegex(plan, /shared read=(\d+)/) || 0;
-    const localRead = this.parseFloatFromRegex(plan, /local read=(\d+)/) || 0;
+    const sharedHit  = this.parseFloatFromRegex(plan, /shared hit=(\d+)/) || 0;
+    const localRead  = this.parseFloatFromRegex(plan, /local read=(\d+)/) || 0;
+    const localHit   = this.parseFloatFromRegex(plan, /local hit=(\d+)/) || 0;
+    const tempWrite  = this.parseFloatFromRegex(plan, /temp write=(\d+)/) || 0;
+    const tempRead   = this.parseFloatFromRegex(plan, /temp read=(\d+)/) || 0;
+    
+
+    const ioEnergyIntensity = 
+      (sharedHit * ENERGY_COEFFICIENTS.SHARED_HIT) +
+      (sharedRead * ENERGY_COEFFICIENTS.SHARED_READ) +
+      ((localRead+ localHit) * ENERGY_COEFFICIENTS.LOCAL_READ) +
+      ((tempRead + tempWrite) * ENERGY_COEFFICIENTS.TEMP_IO);
+
+    // Normalización Logarítmica (Ref: Ley de Amdahl aplicada a recursos)
+    const totalIOPressure = this.treeManager.logNormalize(ioEnergyIntensity, 250000);
 
     // 5. Escalabilidad (Waste Ratio)
     // Buscamos "Rows Removed by Filter" vs "rows="
@@ -244,9 +391,13 @@ export class QueryImpactAnalyzer {
     const isCartesian = plan.includes('Join Filter:') && plan.includes('loops=');
 
     // Recursive Union
-    const hasRecursive = this.hasRecursiveUnion(plan);
-    let structuralComplexityBonus = 0;
-    if (hasRecursive) structuralComplexityBonus = 0.8
+    const hasRecursive = plan.toUpperCase().includes('RECURSIVE UNION');
+    // Si es recursivo, le asignamos un bonus de complejidad base
+    const structuralComplexityBonus = hasRecursive ? 0.8 : 0;
+
+    const rowsPerIteration = this.sumAllMatches(plan, /WorkTable Scan.*rows=(\d+)/);
+    const seqScanInLoop = /Recursive Union[\s\S]*?Seq Scan/.test(plan);
+    const depth = (plan.match(/Recursive Union/g) || []).length;
 
     return {
       executionTime: execTime,
@@ -256,13 +407,15 @@ export class QueryImpactAnalyzer {
       batches: hashData?.batches || 1,
       hasDiskSort,
       tempFilesMb,
-      totalBuffersRead: sharedRead + localRead,
+      totalBuffersRead: totalIOPressure,
       wasteRatio: wasteRatio,
       isCartesian,
       workers: workersPlanned,
-      recursiveDepth: (plan.match(/Recursive Union/g) || []).length,
       maxLoops: maxLoops,
-      structuralComplexityBonus: structuralComplexityBonus
+      structuralComplexityBonus: structuralComplexityBonus,
+      recursiveDepth: depth,
+      rowsPerIteration: rowsPerIteration,
+      seqScanInLoop: seqScanInLoop,
     };
   }
 
@@ -278,7 +431,7 @@ export class QueryImpactAnalyzer {
     return matches.reduce((acc, m) => acc + parseInt(m[1]), 0);
   }
 
-  private generateSmartSuggestions(topOffenders: ImpactNode[], metrics: RawMetrics, plan: string): 
+  private generateSmartSuggestions(topOffenders: ImpactNode[], metrics: RawMetrics, plan: string, suggestionLib: SuggestionTemplate[]): 
     {list: string[], solucion: string[]} {
     const list: string[] = [];
     const solucion: string[] = [];
@@ -288,35 +441,16 @@ export class QueryImpactAnalyzer {
     const hasJoinInPlan = planUpper.includes('JOIN');
     const isNestedLoop = planUpper.includes('NESTED LOOP');
 
-    const plannedWorkers = parseInt(plan.match(/Workers Planned: (\d+)/)?.[1] || "0");
-    const launchedWorkers = parseInt(plan.match(/Workers Launched: (\d+)/)?.[1] || "0");
-    // Paralelismo fantasma
-    if (plannedWorkers > 0 && launchedWorkers === 0) {
-      list.push("[CRITICAL] Fallo total de paralelismo (Resource Contention).");
-      solucion.push("El optimizador planeó workers pero el sistema no pudo iniciarlos. Revisa 'max_parallel_workers' o la carga de CPU del servidor; la consulta se ejecutó de forma secuencial.");
-    } else if (launchedWorkers < plannedWorkers) {
-      list.push("[WARNING] Paralelismo degradado.");
-      solucion.push(`Se iniciaron solo ${launchedWorkers} de ${plannedWorkers} workers planeados. La consulta es más lenta de lo esperado por falta de recursos disponibles.`);
-    }
-    // 1. Manejo de Recursión
-    if (isRecursive) {
-      const hasSeqScan = planUpper.includes('SEQ SCAN');
-      list.push("[CRITICAL] Recursión profunda detectada (Recursive Union).");
-      solucion.push(hasSeqScan 
-        ? "La recursión realiza Seq Scans en cada iteración. ¡Indiza las llaves foráneas de la jerarquía inmediatamente!" 
-        : "Revisa la condición de parada de la CTE; la profundidad está generando una carga excesiva.");
-    }
-
-    // 2. Manejo de Nested Loop (Solo si no es recursión, para evitar ruido)
-    if (isNestedLoop && !isRecursive && metrics.maxLoops > 100) {
-      list.push("[CRITICAL] Detección de bucle anidado ineficiente (Nested Loop).");
-      solucion.push("Faltan condiciones de igualdad en el JOIN o índices. El motor está haciendo un producto cartesiano.");
-    }
+    // 3. Ordenar por severidad (Critical -> High -> Medium)
+    suggestionLib.sort((a, b) => {
+        const priority = { 'critical': 0, 'high': 1, 'medium': 2, 'low': 3 };
+        return priority[a.severity] - priority[b.severity];
+    });
 
     
 
     // --- PARTE B: LIBRERÍA DE CONOCIMIENTOS (BASADA EN ÁRBOL) ---
-    for (const template of SUGGESTION_LIBRARY) {
+    /* for (const template of suggestionLib) {
 
       // 1. Sugerencias con nested duplicados las saltamos.
       const isDuplicateNested = (template.text.includes('Nested Loop') || template.id.includes('NESTED_LOOP')) 
@@ -328,6 +462,7 @@ export class QueryImpactAnalyzer {
       if (template.id === 'CARTESIAN_RISK' && list.some(item => item.includes('producto cartesiano'))) {
         continue;
       }
+      
 
       // si hay operadores de JsonB
       const esJsonSugerencia = template.id === 'JSONB_OPTIMIZATION';
@@ -385,19 +520,39 @@ export class QueryImpactAnalyzer {
         list.push(`[${template.severity.toUpperCase()}] ${template.text} (Basado en ${impactPercentage}% de impacto en ${activeTrigger.label})`);
         solucion.push(customSolution);
       }
-    }
+    } */
+    
+    for (const template of suggestionLib) {
+      const activeTrigger = topOffenders.find(o => template.triggerNodes.includes(o.id));
 
-    // 3. Caso: Data Waste (Filtrado ineficiente)
-    if (metrics.wasteRatio > 0.7 && !list.some(i => i.includes('Filtrado'))) {
-      list.push("[HIGH] Filtrado ineficiente de datos.");
-      solucion.push("Se leen demasiadas filas para luego descartarlas. Crea un índice compuesto que incluya las columnas del WHERE.");
+      if (activeTrigger && (!template.validate || template.validate(plan))) {
+        let finalSolution = template.solution;
+
+        // REFINAMIENTO DINÁMICO (En lugar de múltiples entradas en la lib)
+        if (template.id === 'NESTED_LOOP_BOMB' && plan.toUpperCase().includes('JOIN FILTER')) {
+          finalSolution = "Se detectó un Join Filter sin índice. El motor está realizando un producto cartesiano virtual. ¡Añade índices en las FK!";
+        }
+
+        list.push(`[${template.severity.toUpperCase()}] ${template.text}`);
+        solucion.push(finalSolution);
+      }
     }
+    
     return { list, solucion };
   }
 
   // Esquema conceptual de la construcción
   private buildTree(metrics: any): ImpactNode {
     const manager = new ImpactTreeManager();
+
+    const cpuIntensity = metrics.executionTime / 10000; // 10s de CPU = 100% stress
+    const ioIntensity = metrics.totalBuffersRead; 
+
+    // 2. Definimos el valor del nodo Eco Impact
+    const ecoValue = Math.min(
+      (Math.min(cpuIntensity, 1.0) * 0.4) + (ioIntensity * 0.6), 
+      1.0
+    );
 
     const root: ImpactNode = {
       id: 'query_impact',
@@ -437,6 +592,20 @@ export class QueryImpactAnalyzer {
           weight: 0.4,
           value: 0,
           children: [
+            {
+              id: 'recursive_expansion',
+              label: 'Recursive Expansion',
+              weight: 0.6,
+              value: Math.min(
+                (manager.logNormalize(metrics.rowsPerIteration, 10000) * (metrics.seqScanInLoop ? 1.5 : 0.5)) +
+                (metrics.recursiveDepth * 0.1),
+                1.0
+              ),
+              children: [
+                { id: 'recursion_depth', label: 'Depth', value: metrics.recursiveDepth / 10, weight: 0.3 },
+                { id: 'rows_per_iter', label: 'Rows per Iteration', value: manager.logNormalize(metrics.rowsPerIteration, 5000), weight: 0.7 }
+              ]
+            },
             { 
               id: 'waste', 
               label: 'Data Waste', 
@@ -446,7 +615,8 @@ export class QueryImpactAnalyzer {
             { 
               id: 'complexity', 
               label: 'Structural Complexity', 
-              weight: 0.4, 
+              weight: 0.4,
+              isCritical: metrics.isCartesian || metrics.structuralComplexityBonus > 0.5, // Grave
               // Si hay Join Filter o loops > 1000, es riesgo estructural
               value: Math.max(
                 metrics.isCartesian ? 1 : 0,
@@ -466,10 +636,20 @@ export class QueryImpactAnalyzer {
           id: 'eco',
           label: 'Eco Impact',
           weight: 0.2,
-          value: 0,
+          value: ecoValue,
           // El valor de Eco se deriva de la intensidad de CPU e I/O
           children: [
-            { id: 'carbon', label: 'Carbon Footprint', weight: 1, value: 0 } 
+          { 
+            id: 'carbon', 
+            label: 'Carbon Footprint', 
+            weight: 1, 
+            // sensibilidad: 1M de buffers o 5s de CPU saturan el impacto al 100%
+            value: Math.min(
+              ((metrics.totalBuffersRead / 125000) * 0.6) + 
+              ((metrics.executionTime / 5000) * 0.4), 
+              1
+            ) 
+          }
           ]
         }
       ]
