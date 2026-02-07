@@ -24,6 +24,7 @@ export interface AnalysisResult {
 
 interface RawMetrics {
   executionTime: number;
+  execTimeInExplain: boolean;
   planningTime: number;
   jitTime: number;
   batches: number;
@@ -35,6 +36,7 @@ interface RawMetrics {
   workers: number;
   recursiveDepth: number;
   maxLoops: number;
+  structuralComplexityBonus: number;
 }
 
 interface SuggestionTemplate {
@@ -85,6 +87,14 @@ const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     solution: "El optimizador eligió un Nested Loop ineficiente. Considera forzar un Hash Join o añadir índices para convertir los Scans en Index Seeks.",
     triggerNodes: ['complexity'],
     minImpact: 0.8,
+    severity: 'critical'
+  },
+  {
+    id: 'RECURSIVE_EXPLOSION',
+    text: "Recursión profunda detectada (Recursive Union).",
+    solution: "La CTE recursiva está realizando escaneos secuenciales en cada iteración. Asegúrate de tener un índice en la columna de unión (parent_id) para evitar el colapso del rendimiento.",
+    triggerNodes: ['complexity', 'io'], // La recursión suele disparar ambos
+    minImpact: 0.6,
     severity: 'critical'
   }
 ];
@@ -138,13 +148,46 @@ export class QueryImpactAnalyzer {
       impactTree,
       topOffenders,
       suggestions,
+      execTimeInExplain: metrics.execTimeInExplain,
       breakdown: this.generateBreakdown(impactTree)
     };
   }
 
+  private hasRecursiveUnion(plan: string): boolean {
+    const isRecursive = plan.includes('Recursive Union');
+    const hasSeqScanInRecursion = /Recursive Union[\s\S]*?Seq Scan/.test(plan);
+
+    return isRecursive && hasSeqScanInRecursion;
+  }
+
   private extractAllMetrics(plan: string): RawMetrics {
-    // 1. Tiempos (ms)
-    const execTime = this.parseFloatFromRegex(plan, /Execution [Tt]ime: ([\d.]+)/) || 0;
+    // 1. Tiempos (ms) - Obtención de tiempo de ejecución bajo 3 escenarios
+    //escenario 1: esta declarado en el plan text
+    let execTime = this.parseFloatFromRegex(plan, /Execution [Tt]ime: ([\d.]+)/) || 0;
+
+    // escenario 2
+    if (execTime === 0) {
+      // Buscamos el primer "actual time=XX.XX..YY.YYY" y tomamos el segundo valor (el final)
+      const rootActualTimeMatch = plan.match(/actual time=[\d.]+\.\.([\d.]+)/);
+      if (rootActualTimeMatch) {
+        execTime = parseFloat(rootActualTimeMatch[1]);
+      }
+    }
+    //(Escenario 3): Si sigue siendo 0 (es un EXPLAIN sin ANALYZE),
+    // tomamos el COSTO superior como una métrica de tiempo referencial (opcional)
+    if (execTime === 0) {
+      const costMatch = plan.match(/cost=[\d.]+\.\.([\d.]+)/);
+      if (costMatch) {
+        // El costo no es tiempo, pero para efectos de score nos da una magnitud
+        execTime = parseFloat(costMatch[1]) / 100; 
+      }
+    }
+
+    // si todo falla el valor mínimo será 0.01
+
+    const execTimeInExplain = execTime > 0
+    execTime = execTimeInExplain ? execTime : 0.01;
+
     const planTime = this.parseFloatFromRegex(plan, /Planning [Tt]ime: ([\d.]+)/) || 0;
     
     // 2. JIT (Just In Time Compilation) - Impacto en CPU
@@ -176,8 +219,14 @@ export class QueryImpactAnalyzer {
     const workersPlanned = this.parseFloatFromRegex(plan, /Workers Planned: (\d+)/) || 0;
     const isCartesian = plan.includes('Join Filter:') && plan.includes('loops=');
 
+    // Recursive Union
+    const hasRecursive = this.hasRecursiveUnion(plan);
+    let structuralComplexityBonus = 0;
+    if (hasRecursive) structuralComplexityBonus = 0.8
+
     return {
       executionTime: execTime,
+      execTimeInExplain: execTimeInExplain,
       planningTime: planTime,
       jitTime,
       batches: hashData?.batches || 1,
@@ -188,7 +237,8 @@ export class QueryImpactAnalyzer {
       isCartesian,
       workers: workersPlanned,
       recursiveDepth: (plan.match(/Recursive Union/g) || []).length,
-      maxLoops: maxLoops
+      maxLoops: maxLoops,
+      structuralComplexityBonus: structuralComplexityBonus
     };
   }
 
@@ -289,7 +339,8 @@ export class QueryImpactAnalyzer {
               weight: 0.4, 
               // Si hay Join Filter o loops > 1000, es riesgo estructural
               value: Math.max(
-                metrics.isCartesian ? 1 : 0, 
+                metrics.isCartesian ? 1 : 0,
+                metrics.structuralComplexityBonus || 0, 
                 manager.logNormalize(metrics.maxLoops, 100000) // 100k loops es el umbral de pánico (1.0)
               )
             },
@@ -708,13 +759,22 @@ export class QueryImpactAnalyzer {
    * Extrae métricas detalladas del Hash Join
    */
   private extractHashMetrics(text: string): {batches: number, buckets: number, memoryUsedKb: number} | null {
-    const match = text.match(/Buckets:\s+(\d+)\s+Batches:\s+(\d+)\s+Memory Usage:\s+(\d+)(kB|MB)/);
-    if (!match) return null;
+    const bucketsMatch = text.match(/Buckets: (\d+)/);
+    const batchesMatch = text.match(/Batches: (\d+)/);
+    const memoryMatch = text.match(/Memory Usage: (\d+)(kB|MB)/);
+
+    if (!bucketsMatch && !batchesMatch && !memoryMatch) return null;
+
+    let memKb = 0;
+    if (memoryMatch) {
+      memKb = parseFloat(memoryMatch[1]);
+      if (memoryMatch[2] === 'MB') memKb *= 1024;
+    }
 
     return {
-      buckets: parseInt(match[1]),
-      batches: parseInt(match[2]),
-      memoryUsedKb: match[4] === 'MB' ? parseInt(match[3]) * 1024 : parseInt(match[3])
+      buckets: bucketsMatch ? parseInt(bucketsMatch[1]) : 0,
+      batches: batchesMatch ? parseInt(batchesMatch[1]) : 1, // Default 1 si no hay batches a disco
+      memoryUsedKb: memKb
     };
   }
 

@@ -10,6 +10,7 @@ export interface ImpactNode {
 }
 
 export interface SmartAnalysisResult extends AnalysisResult {
+  execTimeInExplain: boolean;
   impactTree: ImpactNode;
   topOffenders: ImpactNode[];
   breakdown: string; // Explicación de la causa raíz

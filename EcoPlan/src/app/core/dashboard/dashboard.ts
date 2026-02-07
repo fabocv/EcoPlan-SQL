@@ -6,7 +6,7 @@ import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
 import { SmartAnalysisResult } from '../services/ImpactTreeManager';
 
-const CURRENT_VERSION = "V0.8"
+const CURRENT_VERSION = "V0.8.4"
 interface EcoData {
   explain: string;
   cloud: CloudProvider;
@@ -41,6 +41,16 @@ export class Dashboard {
   examples: ExamplePlan[] = examplesExplain;
   readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
   valueExample = signal("");
+
+  readonly nodeDefinitions: Record<string, string> = {
+    perf: "Impacto directo en el tiempo de respuesta y consumo de hardware actual.",
+    cpu: "Presión sobre los núcleos del procesador. Incluye tiempos de ejecución y compilación JIT.",
+    mem: "Uso de memoria RAM. Valores altos indican que los datos están desbordando al disco duro.",
+    io: "Lectura y escritura física en disco. Es el cuello de botella más lento y costoso.",
+    scalability: "Riesgo de que la consulta colapse o se vuelva extremadamente cara al aumentar los datos.",
+    waste: "Eficiencia del filtrado. Mide cuántas filas se leyeron pero terminaron descartándose.",
+    complexity: "Riesgo estructural: presencia de productos cartesianos, bucles infinitos o recursión profunda."
+  };
 
   private sanitizeInput(input: string): string {
     // Elimina cualquier intento de tags HTML para evitar XSS
@@ -118,6 +128,12 @@ export class Dashboard {
     this.analisis.set({ ...res }); 
   }
 
+
+  esCostoInsignificante(): boolean {
+    const c = this.analisis()?.economicImpact || 0;
+    return c >= 0 && c < 0.01;
+  }
+
   validarRango() {
     let valor = Math.floor(this.ecoModel().frequency); // Asegurar entero
     let showToast = false
@@ -150,7 +166,7 @@ export class Dashboard {
         ...f,
         explain: example.content
       }));
-      setTimeout(() => this.calcular(), 100);
+      setTimeout(() => this.procesarPlan(), 100);
     }
   }
 }
