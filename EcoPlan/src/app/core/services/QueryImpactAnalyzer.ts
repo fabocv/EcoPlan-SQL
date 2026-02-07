@@ -2,6 +2,7 @@
 
 import { Injectable } from "@angular/core";
 import { text } from "stream/consumers";
+import { ImpactNode, ImpactTreeManager, SmartAnalysisResult } from "./ImpactTreeManager";
 
 /**
  * Tipos de Nube Soportados
@@ -21,6 +22,91 @@ export interface AnalysisResult {
   provider: CloudProvider;
 }
 
+interface RawMetrics {
+  executionTime: number;
+  execTimeInExplain: boolean;
+  planningTime: number;
+  jitTime: number;
+  batches: number;
+  hasDiskSort: boolean;
+  tempFilesMb: number;
+  totalBuffersRead: number;
+  wasteRatio: number;
+  isCartesian: boolean;
+  workers: number;
+  recursiveDepth: number;
+  maxLoops: number;
+  structuralComplexityBonus: number;
+}
+
+interface SuggestionTemplate {
+  id: string;
+  text: string;
+  solution: string;
+  triggerNodes: string[]; // IDs de nodos que activan esta sugerencia
+  minImpact: number;      // Umbral (0-1) para activarse
+  severity: 'low' | 'medium' | 'high' | 'critical';
+}
+
+const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
+  {
+    id: 'NESTED_LOOP_BOMB',
+    text: "Detección de bucle anidado ineficiente (Nested Loop).",
+    solution: "Faltan condiciones de igualdad en el JOIN o índices en las llaves foráneas. El motor está haciendo un producto cartesiano.",
+    triggerNodes: ['complexity', 'waste'],
+    minImpact: 0.8,
+    severity: 'critical'
+  },
+  {
+    id: 'JSONB_OPTIMIZATION',
+    text: "Acceso ineficiente a campos JSONB detectado.",
+    solution: "Estás filtrando por una llave JSON (->>). El motor debe parsear cada documento en cada fila. Considera crear un índice funcional o un índice GIN: 'CREATE INDEX idx_name ON table ((col->>\"key\"));'",
+    triggerNodes: ['waste', 'complexity'],
+    minImpact: 0.7,
+    severity: 'critical'
+  },
+  {
+    id: 'WORK_MEM_LIMIT',
+    text: "El motor está usando el disco para ordenar o cruzar datos.",
+    solution: "Incrementar 'work_mem'. Valor sugerido: {val}.",
+    triggerNodes: ['mem', 'io'],
+    minImpact: 0.6,
+    severity: 'critical'
+  },
+  {
+    id: 'WASTE_FILTER',
+    text: "Se están descartando demasiadas filas mediante filtros post-lectura.",
+    solution: "Crear un índice compuesto que incluya las columnas del WHERE.",
+    triggerNodes: ['waste'],
+    minImpact: 0.5,
+    severity: 'high'
+  },
+  {
+    id: 'CARTESIAN_RISK',
+    text: "Detección de Producto Cartesiano o Join ineficiente.",
+    solution: "Revisar las condiciones del JOIN; faltan llaves foráneas en el filtro.",
+    triggerNodes: ['complexity'],
+    minImpact: 0.9,
+    severity: 'critical'
+  },
+  {
+    id: 'LOOP_EXPLOSION',
+    text: "Detección de bucles excesivos (Loops > 100k).",
+    solution: "El optimizador eligió un Nested Loop ineficiente. Considera forzar un Hash Join o añadir índices para convertir los Scans en Index Seeks.",
+    triggerNodes: ['complexity'],
+    minImpact: 0.8,
+    severity: 'critical'
+  },
+  {
+    id: 'RECURSIVE_EXPLOSION',
+    text: "Recursión profunda detectada (Recursive Union).",
+    solution: "La CTE recursiva está realizando escaneos secuenciales en cada iteración. Asegúrate de tener un índice en la columna de unión (parent_id) para evitar el colapso del rendimiento.",
+    triggerNodes: ['complexity', 'io'], // La recursión suele disparar ambos
+    minImpact: 0.6,
+    severity: 'critical'
+  }
+];
+
 export const voidAnalysis: AnalysisResult = {
   executionTimeMs: 0,
   economicImpact: 0,
@@ -39,45 +125,357 @@ const CLOUD_RATES: Record<CloudProvider, CloudPricing> = {
   providedIn: 'root'
 })
 export class QueryImpactAnalyzer {
-  
-  public analyze(planText: string, provider: CloudProvider = 'AWS', frequencyPerDay: number = 1000): AnalysisResult {
-    const timeMs = this.extractExecutionTime(planText);
-    const buffers = this.extractBuffers(planText);
-    const rowsRemoved = this.extractRowsRemoved(planText);
-    const rowsReturned = this.extractRowsReturned(planText);
-    
-    const rates = CLOUD_RATES[provider];
-    
-    // Artesanía Técnica: Si no hay buffers reales, estimamos el tráfico de I/O
-    // basado en el volumen de filas procesadas para evitar costos de $0.
-    const estimatedBuffers = buffers > 0 ? buffers : Math.ceil((rowsReturned + rowsRemoved) / 10);
 
-    const workersPlanned = parseInt(planText.match(/Workers Planned: (\d+)/)?.[1] || '0');
-    const workersLaunched = parseInt(planText.match(/Workers Launched: (\d+)/)?.[1] || '0');
+  private treeManager = new ImpactTreeManager();
 
-    // Si hay paralelismo, el costo de cómputo debería escalar
-    // El proceso líder + los workers lanzados
-    const totalCPUs = 1 + workersLaunched;
+  public analyze(plan: string, provider: CloudProvider = 'AWS', frequency: number = 1000): SmartAnalysisResult {
+    // 1. Extraer métricas crudas (Raw Metrics)
+    const metrics = this.extractAllMetrics(plan);
+    
+    // 2. Construir el Árbol de Impacto
+    const impactTree = this.buildTree(metrics);
+    
+    // 3. Calcular Score y Costos
+    const totalImpact = this.treeManager.resolve(impactTree);
+    const efficiencyScore = Math.max(0, 100 - (totalImpact * 100));
+    
+    const executionTimeMs = metrics.executionTime;
     const rate = CLOUD_RATES[provider];
-    // 2. Costo de Ejecución Única (UNITARIO)
-    const computeCost = timeMs * rate.computeUnitCostPerMs * totalCPUs;
-    const ioCost = estimatedBuffers * rate.ioCostPerBuffer;
-    const costPerExecution = computeCost + ioCost;
+    const baseCost = (executionTimeMs * rate.computeUnitCostPerMs) * (1 + metrics.workers);
+    const economicImpact = baseCost * frequency;
 
-    // 3. Impacto Mensual (PROYECCIÓN)
-    // Usamos la frecuencia que viene por parámetro (ej. 1000 veces al día)
-    const monthlyImpact = costPerExecution * frequencyPerDay * 30;
+    // 4. Generar Sugerencias Basadas en el Árbol
+    const topOffenders = this.treeManager.getTopOffenders(impactTree);
+    const suggestions = this.generateSmartSuggestions(topOffenders, metrics, plan);
 
-    const suggestions: {list: string[], solucion: string[]} = this.generateSuggestions(planText, timeMs, rowsRemoved, rowsReturned);
-    
     return {
-      executionTimeMs: timeMs,
-      economicImpact: parseFloat(monthlyImpact.toFixed(2)),
+      executionTimeMs,
+      economicImpact,
+      efficiencyScore,
+      provider,
+      impactTree,
+      topOffenders,
       suggestions,
-      efficiencyScore: this.calculateEfficiency(timeMs, rowsRemoved, rowsReturned, planText),
-      provider: provider
+      execTimeInExplain: metrics.execTimeInExplain,
+      breakdown: this.generateBreakdown(impactTree)
     };
   }
+
+  private hasRecursiveUnion(plan: string): boolean {
+    const isRecursive = plan.includes('Recursive Union');
+    const hasSeqScanInRecursion = /Recursive Union[\s\S]*?Seq Scan/.test(plan);
+
+    return isRecursive && hasSeqScanInRecursion;
+  }
+
+  private extractAllMetrics(plan: string): RawMetrics {
+    // 1. Tiempos (ms) - Obtención de tiempo de ejecución bajo 3 escenarios
+    //escenario 1: esta declarado en el plan text
+    let execTime = this.parseFloatFromRegex(plan, /Execution [Tt]ime: ([\d.]+)/) || 0;
+
+    // escenario 2
+    if (execTime === 0) {
+      // Buscamos el primer "actual time=XX.XX..YY.YYY" y tomamos el segundo valor (el final)
+      const rootActualTimeMatch = plan.match(/actual time=[\d.]+\.\.([\d.]+)/);
+      if (rootActualTimeMatch) {
+        execTime = parseFloat(rootActualTimeMatch[1]);
+      }
+    }
+    //(Escenario 3): Si sigue siendo 0 (es un EXPLAIN sin ANALYZE),
+    // tomamos el COSTO superior como una métrica de tiempo referencial (opcional)
+    if (execTime === 0) {
+      const costMatch = plan.match(/cost=[\d.]+\.\.([\d.]+)/);
+      if (costMatch) {
+        // El costo no es tiempo, pero para efectos de score nos da una magnitud
+        execTime = parseFloat(costMatch[1]) / 100; 
+      }
+    }
+
+    // si todo falla el valor mínimo será 0.01
+
+    const execTimeInExplain = execTime > 0
+    execTime = execTimeInExplain ? execTime : 0.01;
+
+    const planTime = this.parseFloatFromRegex(plan, /Planning [Tt]ime: ([\d.]+)/) || 0;
+    
+    // 2. JIT (Just In Time Compilation) - Impacto en CPU
+    const jitTime = this.parseFloatFromRegex(plan, /JIT:[\s\S]*?Total: ([\d.]+)/) || 0;
+
+    // 3. Memoria (Batches y Sorts)
+    const hashData = this.extractHashMetrics(plan);
+    const hasDiskSort = plan.includes('Sort Method: external merge');
+    const tempFilesMatch = plan.match(/Disk: (\d+)kB/);
+    const tempFilesMb = tempFilesMatch ? parseInt(tempFilesMatch[1]) / 1024 : 0;
+
+    // 4. I/O (Buffers)
+    const sharedRead = this.parseFloatFromRegex(plan, /shared read=(\d+)/) || 0;
+    const localRead = this.parseFloatFromRegex(plan, /local read=(\d+)/) || 0;
+
+    // 5. Escalabilidad (Waste Ratio)
+    // Buscamos "Rows Removed by Filter" vs "rows="
+
+    const rowsRemovedFilter = this.sumAllMatches(plan, /Rows Removed by Filter: (\d+)/);
+    const rowsRemovedJoin = this.sumAllMatches(plan, /Rows Removed by Join Filter: (\d+)/);
+    const totalWaste = rowsRemovedFilter + rowsRemovedJoin;
+
+    const rowsReturned = this.parseFloatFromRegex(plan, /actual time=[\d.]+..[\d.]+ rows=(\d+)/) || 1;
+    const wasteRatio = totalWaste / (totalWaste + rowsReturned || 1);
+
+    const maxLoops = Math.max(...[...plan.matchAll(/loops=(\d+)/g)].map(m => parseInt(m[1])));
+
+    // 6. Paralelismo y Complejidad
+    const workersPlanned = this.parseFloatFromRegex(plan, /Workers Planned: (\d+)/) || 0;
+    const isCartesian = plan.includes('Join Filter:') && plan.includes('loops=');
+
+    // Recursive Union
+    const hasRecursive = this.hasRecursiveUnion(plan);
+    let structuralComplexityBonus = 0;
+    if (hasRecursive) structuralComplexityBonus = 0.8
+
+    return {
+      executionTime: execTime,
+      execTimeInExplain: execTimeInExplain,
+      planningTime: planTime,
+      jitTime,
+      batches: hashData?.batches || 1,
+      hasDiskSort,
+      tempFilesMb,
+      totalBuffersRead: sharedRead + localRead,
+      wasteRatio: wasteRatio,
+      isCartesian,
+      workers: workersPlanned,
+      recursiveDepth: (plan.match(/Recursive Union/g) || []).length,
+      maxLoops: maxLoops,
+      structuralComplexityBonus: structuralComplexityBonus
+    };
+  }
+
+  /** * Helpers de extracción 
+   */
+  private parseFloatFromRegex(text: string, regex: RegExp): number {
+    const match = text.match(regex);
+    return match ? parseFloat(match[1]) : 0;
+  }
+
+  private sumAllMatches(text: string, regex: RegExp): number {
+    const matches = [...text.matchAll(new RegExp(regex, 'g'))];
+    return matches.reduce((acc, m) => acc + parseInt(m[1]), 0);
+  }
+
+  private generateSmartSuggestions(topOffenders: ImpactNode[], metrics: RawMetrics, plan: string): 
+    {list: string[], solucion: string[]} {
+    const list: string[] = [];
+    const solucion: string[] = [];
+    const planUpper = plan.toUpperCase();
+
+    const isRecursive = planUpper.includes('RECURSIVE UNION');
+    const hasJoinInPlan = planUpper.includes('JOIN');
+    const isNestedLoop = planUpper.includes('NESTED LOOP');
+
+    const plannedWorkers = parseInt(plan.match(/Workers Planned: (\d+)/)?.[1] || "0");
+    const launchedWorkers = parseInt(plan.match(/Workers Launched: (\d+)/)?.[1] || "0");
+    // Paralelismo fantasma
+    if (plannedWorkers > 0 && launchedWorkers === 0) {
+      list.push("[CRITICAL] Fallo total de paralelismo (Resource Contention).");
+      solucion.push("El optimizador planeó workers pero el sistema no pudo iniciarlos. Revisa 'max_parallel_workers' o la carga de CPU del servidor; la consulta se ejecutó de forma secuencial.");
+    } else if (launchedWorkers < plannedWorkers) {
+      list.push("[WARNING] Paralelismo degradado.");
+      solucion.push(`Se iniciaron solo ${launchedWorkers} de ${plannedWorkers} workers planeados. La consulta es más lenta de lo esperado por falta de recursos disponibles.`);
+    }
+    // 1. Manejo de Recursión
+    if (isRecursive) {
+      const hasSeqScan = planUpper.includes('SEQ SCAN');
+      list.push("[CRITICAL] Recursión profunda detectada (Recursive Union).");
+      solucion.push(hasSeqScan 
+        ? "La recursión realiza Seq Scans en cada iteración. ¡Indiza las llaves foráneas de la jerarquía inmediatamente!" 
+        : "Revisa la condición de parada de la CTE; la profundidad está generando una carga excesiva.");
+    }
+
+    // 2. Manejo de Nested Loop (Solo si no es recursión, para evitar ruido)
+    if (isNestedLoop && !isRecursive && metrics.maxLoops > 100) {
+      list.push("[CRITICAL] Detección de bucle anidado ineficiente (Nested Loop).");
+      solucion.push("Faltan condiciones de igualdad en el JOIN o índices. El motor está haciendo un producto cartesiano.");
+    }
+
+    
+
+    // --- PARTE B: LIBRERÍA DE CONOCIMIENTOS (BASADA EN ÁRBOL) ---
+    for (const template of SUGGESTION_LIBRARY) {
+
+      // 1. Sugerencias con nested duplicados las saltamos.
+      const isDuplicateNested = (template.text.includes('Nested Loop') || template.id.includes('NESTED_LOOP')) 
+                             && list.some(item => item.includes('Nested Loop'));
+                             
+      if (isDuplicateNested) continue;
+
+      // 2. Filtro de Producto Cartesiano redundante
+      if (template.id === 'CARTESIAN_RISK' && list.some(item => item.includes('producto cartesiano'))) {
+        continue;
+      }
+
+      // si hay operadores de JsonB
+      const esJsonSugerencia = template.id === 'JSONB_OPTIMIZATION';
+      const tieneOperadorJson = plan.includes('->>') || plan.includes('@>');
+      
+      if (esJsonSugerencia && !tieneOperadorJson) {
+        continue; 
+      }
+
+      // 3. Si hay un Nested Loop REAL, silenciamos la alerta de recursión de la librería
+      if (planUpper.includes('NESTED LOOP') && template.id === 'RECURSIVE_EXPLOSION') {
+        continue;
+      }
+
+      // 4. Si detectamos Producto Cartesiano (#4), silenciamos las alertas genéricas de Loop (#5) 
+      // para no repetir el "Nested Loop ineficiente" tres veces.
+      if (template.id === 'LOOP_EXPLOSION' && list.some(i => i.includes('Cartesiano'))) {
+        continue;
+      }
+
+      // 5. Si la sugerencia menciona Join/Loop pero el plan es un Scan simple
+      const mencionaJoin = template.text.includes('Nested Loop') || template.text.includes('JOIN') ||
+        template.id.includes('LOOP');
+      if (mencionaJoin && !hasJoinInPlan) {
+        continue; 
+      }
+
+      if (isRecursive && (template.id === 'RECURSIVE_EXPLOSION' || template.id === 'NESTED_LOOP_GENERIC')) continue;
+      if (isNestedLoop && template.id === 'NESTED_LOOP_GENERIC') continue;
+
+      if (isRecursive && (
+        template.id.includes('LOOP') || 
+        template.text.includes('bucle') || 
+        template.text.includes('Nested')
+      )) {
+        continue; 
+      }
+
+      if (template.id === 'NESTED_LOOP_GENERIC' && !planUpper.includes('JOIN')) {
+        continue; // Si no hay JOIN en el texto, no culparemos al Nested Loop por el desperdicio
+      }
+
+      const activeTrigger = topOffenders.find(offender => 
+        template.triggerNodes.includes(offender.id) && offender.value >= template.minImpact
+      );
+
+      if (activeTrigger) {
+        const impactPercentage = Math.round(activeTrigger.value * 100);
+        let customSolution = template.solution;
+        
+        if (template.id === 'WORK_MEM_LIMIT') {
+          customSolution = customSolution.replace('{val}', this.calculateNeededWorkMem(metrics.batches, 4096));
+        }
+
+        list.push(`[${template.severity.toUpperCase()}] ${template.text} (Basado en ${impactPercentage}% de impacto en ${activeTrigger.label})`);
+        solucion.push(customSolution);
+      }
+    }
+
+    // 3. Caso: Data Waste (Filtrado ineficiente)
+    if (metrics.wasteRatio > 0.7 && !list.some(i => i.includes('Filtrado'))) {
+      list.push("[HIGH] Filtrado ineficiente de datos.");
+      solucion.push("Se leen demasiadas filas para luego descartarlas. Crea un índice compuesto que incluya las columnas del WHERE.");
+    }
+    return { list, solucion };
+  }
+
+  // Esquema conceptual de la construcción
+  private buildTree(metrics: any): ImpactNode {
+    const manager = new ImpactTreeManager();
+
+    const root: ImpactNode = {
+      id: 'query_impact',
+      label: 'Query Impact Total',
+      weight: 1,
+      value: 0,
+      children: [
+        {
+          id: 'perf',
+          label: 'Performance Impact',
+          weight: 0.5,
+          value: 0,
+          children: [
+            { 
+              id: 'cpu', 
+              label: 'CPU Pressure', 
+              weight: 0.4, 
+              value: manager.logNormalize(metrics.executionTime, 5000) 
+            },
+            { 
+              id: 'mem', 
+              label: 'Memory Pressure', 
+              weight: 0.3, 
+              value: metrics.hasDiskSort ? 1 : manager.logNormalize(metrics.batches, 64) 
+            },
+            { 
+              id: 'io', 
+              label: 'I/O Pressure', 
+              weight: 0.3, 
+              value: manager.logNormalize(metrics.tempFilesMb, 100) 
+            }
+          ]
+        },
+        {
+          id: 'scalability',
+          label: 'Scalability Risk',
+          weight: 0.4,
+          value: 0,
+          children: [
+            { 
+              id: 'waste', 
+              label: 'Data Waste', 
+              weight: 0.7, 
+              value: metrics.wasteRatio > 0.5 ? manager.logNormalize(metrics.wasteRatio * 100, 100) : metrics.wasteRatio 
+            },
+            { 
+              id: 'complexity', 
+              label: 'Structural Complexity', 
+              weight: 0.4, 
+              // Si hay Join Filter o loops > 1000, es riesgo estructural
+              value: Math.max(
+                metrics.isCartesian ? 1 : 0,
+                metrics.structuralComplexityBonus || 0, 
+                manager.logNormalize(metrics.maxLoops, 100000) // 100k loops es el umbral de pánico (1.0)
+              )
+            },
+            { 
+              id: 'parallel', 
+              label: 'Worker Dependency', 
+              weight: 0.4, 
+              value: metrics.workers > 2 ? 0.8 : 0 
+            }
+          ]
+        },
+        {
+          id: 'eco',
+          label: 'Eco Impact',
+          weight: 0.2,
+          value: 0,
+          // El valor de Eco se deriva de la intensidad de CPU e I/O
+          children: [
+            { id: 'carbon', label: 'Carbon Footprint', weight: 1, value: 0 } 
+          ]
+        }
+      ]
+    };
+
+    manager.resolve(root); // Calcula todos los niveles
+    return root;
+  }
+
+  private generateBreakdown(root: ImpactNode): string {
+    // Obtenemos los 3 grandes pilares
+    const perf = root.children?.find(c => c.id === 'perf');
+    const scal = root.children?.find(c => c.id === 'scalability');
+    const eco = root.children?.find(c => c.id === 'eco');
+
+    const main = [perf, scal, eco].sort((a, b) => (b?.value || 0) - (a?.value || 0))[0];
+
+    if (!main || main.value < 0.2) return "La consulta está bien optimizada.";
+
+    return `Análisis de Causa Raíz: El ${(main.value * 100).toFixed(0)}% del impacto total se concentra en ${main.label}.`;
+  }
+    
 
   private extractExecutionTime(text: string): number {
     // Regex flexible para "Execution time" o "Execution Time"
@@ -158,7 +556,6 @@ export class QueryImpactAnalyzer {
 
     const isCartesian = text.includes('Nested Loop') && text.includes('Join Filter') && removed > 1000000;
     const joinFilter = text.match(/Join Filter: \((.+)\)/)?.[1] || "";
-    const isEquality = joinFilter.includes('=');
     const hasInequality = joinFilter.includes('>') || joinFilter.includes('<');
     const filterCols = this.extractFilterColumns(text);
     
@@ -455,13 +852,22 @@ export class QueryImpactAnalyzer {
    * Extrae métricas detalladas del Hash Join
    */
   private extractHashMetrics(text: string): {batches: number, buckets: number, memoryUsedKb: number} | null {
-    const match = text.match(/Buckets:\s+(\d+)\s+Batches:\s+(\d+)\s+Memory Usage:\s+(\d+)(kB|MB)/);
-    if (!match) return null;
+    const bucketsMatch = text.match(/Buckets: (\d+)/);
+    const batchesMatch = text.match(/Batches: (\d+)/);
+    const memoryMatch = text.match(/Memory Usage: (\d+)(kB|MB)/);
+
+    if (!bucketsMatch && !batchesMatch && !memoryMatch) return null;
+
+    let memKb = 0;
+    if (memoryMatch) {
+      memKb = parseFloat(memoryMatch[1]);
+      if (memoryMatch[2] === 'MB') memKb *= 1024;
+    }
 
     return {
-      buckets: parseInt(match[1]),
-      batches: parseInt(match[2]),
-      memoryUsedKb: match[4] === 'MB' ? parseInt(match[3]) * 1024 : parseInt(match[3])
+      buckets: bucketsMatch ? parseInt(bucketsMatch[1]) : 0,
+      batches: batchesMatch ? parseInt(batchesMatch[1]) : 1, // Default 1 si no hay batches a disco
+      memoryUsedKb: memKb
     };
   }
 

@@ -14,6 +14,16 @@ export const examplesExplain: ExamplePlan[] = [
         ->  Seq Scan on users  (cost=0.00..4120.00 rows=150000 width=22) (actual time=0.005..15.300 rows=150000 loops=1)`
     },
     {
+      title: 'Index Scan Tramposo',
+      content: `Index Scan using idx_users_active on users  (cost=0.42..450.00 rows=100 width=50) (actual time=0.050..15.500 rows=100 loops=1)
+  Index Cond: (is_active = true)
+  Filter: (country = 'Chile')
+  Rows Removed by Filter: 5000
+  Heap Fetches: 4800
+Planning Time: 0.120 ms
+Execution Time: 16.100 ms`
+    },
+    {
       title: 'High Data Waste (Aguja en pajar)',
       content: `Limit  (cost=0.00..154.00 rows=1 width=8) (actual time=420.150..420.151 rows=1 loops=1)
   ->  Seq Scan on sensors  (cost=0.00..154000.00 rows=1000 width=8) (actual time=420.148..420.148 rows=1 loops=1)
@@ -31,17 +41,17 @@ export const examplesExplain: ExamplePlan[] = [
     },
     {
       title: 'Deadly CTE Scan" (Recursión e I/O Masivo)',
-      content: `CTE Scan on recursive_nodes  (cost=1250.45..550600.00 rows=1000000 width=512) (actual time=10.500..8900.250 rows=1000000 loops=1)
+      content: `CTE Scan on recursive_nodes  (cost=6550.00..850500.00 rows=1000000 width=512) (actual time=10.500..9100.250 rows=1000000 loops=1)
   CTE recursive_nodes
-    ->  Recursive Union  (cost=0.00..1250.45 rows=1001 width=512) (actual time=0.020..8500.100 rows=1000000 loops=1)
+    ->  Recursive Union  (cost=0.00..6550.00 rows=1000000 width=512) (actual time=0.020..8500.100 rows=1000000 loops=1)
           ->  Seq Scan on hierarchy_root  (cost=0.00..15.00 rows=1 width=512) (actual time=0.015..0.020 rows=1 loops=1)
-          ->  Hash Join  (cost=0.45..123.54 rows=100 width=512) (actual time=0.500..820.400 rows=99999 loops=10)
+          ->  Hash Join  (cost=0.50..640.00 rows=100000 width=512) (actual time=0.500..820.400 rows=100000 loops=10)
                 Hash Cond: (h.parent_id = r.id)
-                ->  Seq Scan on heavy_hierarchy h  (cost=0.00..850.00 rows=50000 width=512) (actual time=0.010..45.200 rows=50000 loops=10)
-                ->  Hash  (cost=0.20..0.20 rows=10 width=4) (actual time=0.050..0.050 rows=10 loops=1)
-                      Buckets: 1024  Batches: 1  Memory Usage: 8kB
-                      ->  WorkTable Scan on recursive_nodes r  (cost=0.00..0.20 rows=10 width=4) (actual time=0.001..0.005 rows=10 loops=1)
-Planning Time: 0.890 ms
+                ->  Seq Scan on heavy_hierarchy h  (cost=0.00..1200.00 rows=50000 width=512) (actual time=0.010..45.200 rows=50000 loops=10)
+                ->  Hash  (cost=0.30..0.30 rows=10000 width=4) (actual time=0.050..0.050 rows=10000 loops=1)
+                      Buckets: 16384  Batches: 1  Memory Usage: 450kB
+                      ->  WorkTable Scan on recursive_nodes r  (cost=0.00..0.20 rows=10000 width=4) (actual time=0.001..0.005 rows=10000 loops=1)
+Planning Time: 1.250 ms
 Execution Time: 9100.450 ms`
     },
     {
