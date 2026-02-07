@@ -104,6 +104,22 @@ const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     triggerNodes: ['complexity', 'io'], // La recursión suele disparar ambos
     minImpact: 0.6,
     severity: 'critical'
+  },
+  {
+    id: 'PARTIAL_INDEX_OPPORTUNITY',
+    text: "Oportunidad de Índice Parcial detectada.",
+    solution: "Detectamos un Index Scan que aún descarta muchas filas. En lugar de un índice compuesto gigante, crea un índice parcial: 'CREATE INDEX idx_name ON table (priority) WHERE (status = 'error');'. Esto reducirá el tamaño del índice en un 99%.",
+    triggerNodes: ['waste'],
+    minImpact: 0.7, // Solo si el desperdicio es alto
+    severity: 'high'
+  },
+  {
+    id: 'PARTITION_PRUNING_FAIL',
+    text: "Fallo en el podado de particiones (Partition Pruning).",
+    solution: "PostgreSQL está escaneando particiones irrelevantes (ej. meses anteriores). Asegúrate de que la columna de partición esté en el WHERE y que no existan funciones que impidan el pruning, como 'date_trunc()'.",
+    triggerNodes: ['waste', 'structural'],
+    minImpact: 0.8,
+    severity: 'critical'
   }
 ];
 

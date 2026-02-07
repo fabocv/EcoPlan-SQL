@@ -2,6 +2,8 @@
 
 Esta versión evoluciona el motor de análisis de una estructura plana a un **Árbol de Impacto Jerárquico**. El modelo v0.8 introduce conciencia de infraestructura (Paralelismo, JIT) y tipos de datos complejos (JSONB), permitiendo una trazabilidad total entre el plan de ejecución y las recomendaciones FinOps.
 
+En la version 0.8.2, se introducen capacidades para detectar fallos en particionamiento, optimización de almacenamiento (índices parciales)
+
 ## 1. Arquitectura del Árbol de Impacto
 
 El impacto total se calcula mediante la agregación de tres pilares. Cada nodo hoja tiene un valor normalizado de $0.0$ a $1.0$, donde $1.0$ representa una saturación crítica de recursos.
@@ -38,12 +40,13 @@ $$Value = \text{clamp}\left(\frac{\log_2(\text{actual\_value})}{\log_2(\text{cri
 
 ## 3. Motor de Recomendaciones Inteligentes (Smart Suggester)
 
-La v0.8.1 implementa un **Filtro de Exclusión y Deduplicación** para mantener los reportes limpios:
+La v0.8.2 implementa un **Filtro de Exclusión y Deduplicación** para mantener los reportes limpios:
 
 1.  **Prioridad de Join:** Si se detecta un `Nested Loop` con alto impacto, se silencia la alerta de `RECURSIVE_UNION` para evitar falsos positivos de recursión en productos cartesianos.
-2.  **Detección JSONB:** Se activa específicamente cuando el plan contiene operadores `->>`, `@>` o `?` y el `Waste Ratio` supera el 0.7.
+2.  **Detección JSONB:** Se activa específicamente cuando el plan contiene operadores `->>`, `@>` o `?`, `Seq Scan` y el `Waste Ratio` supera el 0.7.
 3.  **Conciencia de Infraestructura:** Compara `Workers Planned` vs `Workers Launched`. Si hay discrepancia, dispara una alerta de **Resource Contention** por encima de las alertas de filtrado.
-
+4. **Índices parciales** Se activa si  encuentra un `Index Scan` y un `Waste Ratio >50%`
+5. **Partition Pruning** Se activa si  encuentra un `Append` y un `Waste Ratio >70%`
 ---
 
 ## 4. Algoritmo de Agregación
@@ -59,3 +62,13 @@ function resolve(node: ImpactNode): number {
   return weightedSum / totalWeight;
 }
 ```
+
+5. Factor de Confianza (Confidence Score - v0.9)
+
+El Efficiency Score final será multiplicado por un factor de confianza basado en la calidad del EXPLAIN provisto:
+
+- **Confianza 1.0 (Alta):** El plan contiene ACTUAL TIME y BUFFERS.
+- **Confianza 0.8 (Media):** El plan contiene ACTUAL TIME pero NO BUFFERS.
+- **Confianza 0.5 (Baja):** El plan es solo un EXPLAIN (estimación teórica).
+
+Fórmula Final: Final_Efficiency_Score = (Calculated_Score * Confidence)
