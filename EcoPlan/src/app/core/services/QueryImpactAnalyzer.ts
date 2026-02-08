@@ -111,6 +111,7 @@ export class QueryImpactAnalyzer {
     const manager = new ImpactTreeManager();
     const dominantNodes = manager.getTopOffenders(impactTree);
     const relevantNodes = dominantNodes.filter(n => n.value > 0.6);
+    console.log("nodos relevantes", relevantNodes)
     const impactSaturation = 1 - Math.max(...dominantNodes.map(n => n.value));
 
     const context: SuggestionContext = {
@@ -177,66 +178,140 @@ export class QueryImpactAnalyzer {
   extractAllMetrics(plan: string): RawMetrics {
     const planUpper = plan.toUpperCase();
     
-    // 3. Estructurales y Bucles
+    // ✅ FIX #1: Capturar ÚLTIMO match (nodo raíz)
+    const actualRowsMatches = plan.match(/\(actual\s+time=[\d.]+\.\.[\d.]+\s+rows=(\d+)/gi);
+    const actualRows = (() => {
+      try {
+        // Pattern 1: "actual time=X..Y rows=N"
+        const pattern1 = /\(actual\s+time=[\d.]+\.\.[\d.]+\s+rows=(\d+)/gi;
+        const matches1 = plan.match(pattern1);
+        
+        if (matches1 && matches1.length > 0) {
+          const lastMatch = matches1[matches1.length - 1];
+          const value = parseInt(lastMatch.match(/(\d+)$/)?.[1] || "0", 10);
+          if (!isNaN(value) && value > 0) return value;
+        }
+        
+        // Pattern 2: Fallback simple "rows=N" (menos preciso pero funciona)
+        const pattern2 = /rows=(\d+)/i;
+        const match2 = plan.match(pattern2);
+        
+        if (match2 && match2[1]) {
+          const value = parseInt(match2[1], 10);
+          if (!isNaN(value)) return value;
+        }
+        
+        return 0;
+      } catch (error) {
+        console.warn("Error parsing actualRows:", error);
+        return 0; // ✅ Fallback final
+      }
+    })();
+
+
+    // Loops
     const loopsMatch = plan.match(/loops=(\d+)/g);
     const maxLoops = loopsMatch 
       ? Math.max(...loopsMatch.map(m => parseInt(m.split('=')[1]))) 
       : 1;
 
-    // 4. Desperdicio (Waste Ratio)
+    // Rows removed
     const rowsRemoved = parseInt(plan.match(/Rows Removed by Filter: (\d+)/i)?.[1] || "0");
-    const actualRows = parseInt(plan.match(/actual rows=(\d+)/i)?.[1] || "0");
-
-    // 5. Flags de Criticidad (v0.9.x)
-    const isRecursive = planUpper.includes('RECURSIVE UNION');
-
-    const {execTime, execTimeInExplain} = this.getExecutionTimeAndExplain(plan)
-
-    // Regex para capturar filas estimadas (rows=N) y reales (actual rows=N)
-    // Nota: El primer match suele ser el nodo raíz, que es el importante para el global.
-    const plannedRowsMatch = plan.match(/rows=(\d+)/); 
-
-    const plannedRows = plannedRowsMatch ? parseInt(plannedRowsMatch[1]) : 0;
-
     const totalRowsRead = (rowsRemoved + actualRows);
 
-    const batches = parseInt(plan.match(/Batches: (\d+)/i)?.[1] || "1");
-    const hasDiskSort = batches > 1 || plan.includes('Disk') || plan.includes('External sort');
+    // Execution time
+    const {execTime, execTimeInExplain} = this.getExecutionTimeAndExplain(plan);
 
-    // tiempos jit
+    // Planned rows
+    const plannedRowsMatch = plan.match(/\brows=(\d+)/); 
+    const plannedRows = plannedRowsMatch ? parseInt(plannedRowsMatch[1]) : 0;
+
+    // Batches y Disk Sort
+    const batches = parseInt(plan.match(/Batches: (\d+)/i)?.[1] || "1");
+    const hasDiskSort = batches > 1 || /Disk:\s*\d+/.test(plan) || plan.includes('External sort');
+
+    // JIT time
     const jitMatch = plan.match(/JIT:[\s\S]*?Timing:[\s\S]*?Total ([\d.]+) ms/);
     const jitTime = jitMatch ? parseFloat(jitMatch[1]) : 0;
 
-    // NUEVO: Detectar presión de JSONB en paralelo
+    // JSONB Parallel
     const hasJsonbParallel = plan.includes('Parallel Seq Scan') && 
                             (plan.includes('->>') || plan.includes('->'));
 
+    // Heavy sort
     const rowsReturned = this.parseFloatFromRegex(plan, /actual time=[\d.]+..[\d.]+ rows=(\d+)/) || 1;
-    const isHeavySort = plan.includes('Sort Method') && 
-                    (rowsReturned > 10000);
+    const isHeavySort = plan.includes('Sort Method') && (rowsReturned > 10000);
+
+    const tempFilesMb = (() => {
+      try {
+        const diskMatch = plan.match(/Disk:\s*([\d.]+)\s*(kB|MB|GB)/i);
+        const storageMatch = plan.match(/Storage:\s*([\d.]+)\s*(kB|MB|GB)/i);
+        
+        const match = diskMatch || storageMatch;
+        if (!match?.[1] || !match?.[2]) return 0; // ✅ Null-safe
+        
+        const value = parseFloat(match[1]);
+        const unit = match[2].toUpperCase();
+        
+        if (unit === 'KB') return value / 1024;
+        if (unit === 'MB') return value;
+        if (unit === 'GB') return value * 1024;
+        return 0;
+      } catch (error) {
+        console.warn("Error parsing tempFilesMb:", error);
+        return 0;
+      }
+    })();
+
+    const totalBuffersRead = (() => {
+      try {
+        const buffersMatch = plan.match(/Buffers:\s*shared hit=(\d+)\s+read=(\d+)/i);
+        if (buffersMatch?.[1] && buffersMatch?.[2]) {
+          return parseInt(buffersMatch[1], 10) + parseInt(buffersMatch[2], 10);
+        }
+        
+        // Fallback: estimar
+        const rowsMatch = plan.match(/rows=(\d+)/);
+        const widthMatch = plan.match(/width=(\d+)/);
+        
+        if (rowsMatch?.[1] && widthMatch?.[1]) {
+          const rows = parseInt(rowsMatch[1], 10);
+          const width = parseInt(widthMatch[1], 10);
+          const bytesRead = rows * width;
+          return Math.ceil(bytesRead / 8192);
+        }
+        
+        return 0;
+      } catch (error) {
+        console.warn("Error parsing totalBuffersRead:", error);
+        return 0;
+      }
+    })();
+
+    const isRecursive = planUpper.includes('RECURSIVE UNION');
+    const wasteRatio = totalRowsRead > 0 
+      ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5) 
+      : 0;
 
     return {
       executionTime: execTime,
       execTimeInExplain: execTimeInExplain,
       planningTime: parseFloat(plan.match(/Planning time: ([\d.]+) ms/i)?.[1] || "0"),
-      jitTime, 
+      jitTime,
       hasJsonbParallel,
-      batches: batches,
-      hasDiskSort: hasDiskSort,
-      tempFilesMb: parseFloat(plan.match(/Storage: ([\d.]+)kB/i)?.[1] || "0") / 1024,
-      totalBuffersRead: parseInt(plan.match(/shared read=(\d+)/i)?.[1] || "0") + 
-                        parseInt(plan.match(/local read=(\d+)/i)?.[1] || "0"),
-      wasteRatio: totalRowsRead > 0 
-        ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5) 
-        : 0,
+      batches,
+      hasDiskSort,
+      tempFilesMb,          
+      totalBuffersRead,     
+      wasteRatio,
       isCartesian: planUpper.includes('JOIN FILTER') || (planUpper.includes('NESTED LOOP') && maxLoops > 100),
       workers: parseInt(plan.match(/Workers Launched: (\d+)/i)?.[1] || "0"),
-      recursiveDepth: isRecursive ? 10 : 0, // Umbral crítico definido en v0.9.x
-      maxLoops: maxLoops,
+      recursiveDepth: isRecursive ? 10 : 0,
+      maxLoops,
       rowsPerIteration: actualRows / maxLoops,
       seqScanInLoop: isRecursive && planUpper.includes('SEQ SCAN'),
-      actualRows: actualRows,
-      plannedRows: plannedRows,
+      actualRows,          
+      plannedRows,
       heapFetches: parseInt(plan.match(/Heap Fetches: (\d+)/)?.[1] || "0"),
       hasParallel: plan.includes('Parallel'),
       isHeavySort,

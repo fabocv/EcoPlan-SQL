@@ -43,10 +43,6 @@ export class ImpactTreeManager {
     return this.clamp(val);
   }
 
-  /**
-   * Calcula el valor de un nodo basado en sus hijos usando Burbujeo Dinámico.
-   * Implementa la Regla de Dominancia Estructural.
-   */
   public resolve(node: ImpactNode): number {
     // Caso base: Si es una hoja, devolvemos su valor normalizado
     if (!node.children || node.children.length === 0) {
@@ -56,21 +52,34 @@ export class ImpactTreeManager {
     // AGREGADO JERÁRQUICO: Obtenemos los valores resueltos de todos los hijos
     const childrenValues = node.children.map(child => this.resolve(child));
     
-    // Burbujeo dinámico: El padre adopta el valor del hijo con mayor impacto
-    const maxValue = Math.max(...childrenValues);
+    // ✅ CAMBIO: Calcular WEIGHTED AVERAGE en lugar de MAX
+    let weightedSum = 0;
+    let totalWeight = 0;
 
-    // REGLA DE DOMINANCIA: Si un nodo estructural >= 0.9, el impacto total >= 0.85
-    if (node.id === 'scalability' || node.id === 'query_impact') {
-      node.value = maxValue >= 0.95 ? Math.max(maxValue, 0.9) : maxValue;
-    } else {
-      node.value = maxValue;
+    for (let i = 0; i < node.children.length; i++) {
+      const child = node.children[i];
+      const weight = child.weight || 1;
+      const childValue = childrenValues[i];
+      
+      weightedSum += childValue * weight;
+      totalWeight += weight;
     }
 
-    // Cap global de saturación: El impacto nunca excede 1.0
+    const avgValue = totalWeight > 0 ? weightedSum / totalWeight : 0;
+
+    // REGLA DE DOMINANCIA: Si un nodo crítico supera un umbral, amplificar
+    if ((node.id === 'scalability' || node.id === 'query_impact') && avgValue >= 0.85) {
+      node.value = Math.min(1, avgValue * 1.1); // Amplificar ligeramente
+    } else {
+      node.value = avgValue;
+    }
+
+    // Cap global de saturación
     node.value = Math.min(1, node.value);
 
     return node.value;
   }
+
 
   /**
    * Aplana el árbol para facilitar la búsqueda de nodos críticos.
