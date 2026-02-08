@@ -122,14 +122,10 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     severity: 'critical',
     kind: 'corrective',
     validate: (plan: string) => {
-      const loopsMatch = plan.match(/loops=(\d+)/g);
-      if (!loopsMatch) return false;
-      
-      // Verificamos si algún nodo tiene más de 100 loops
-      return loopsMatch.some(m => {
-        const value = parseInt(m.split('=')[1]);
-        return value > 100;
-      });
+      // Un "Bomb" es cuando hay loops altos (> 10k) combinados con un Seq Scan interno
+      const hasHighLoops = /loops=(\d{5,})/.test(plan); 
+      const hasInnerSeqScan = plan.includes('Nested Loop') && plan.includes('Seq Scan on');
+      return hasHighLoops && hasInnerSeqScan;
     }
   },
   {
@@ -150,7 +146,10 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     minImpact: 0.7,
     kind: 'opportunistic',
     severity: 'critical',
-    validate: (plan: string) => plan.includes('->>') || plan.includes('->'),
+    validate: (plan: string) => {
+        // Buscamos el operador -> o ->> seguido de un filtro
+        return (plan.includes('->>') || plan.includes('->')) && plan.includes('Filter:');
+    }
   },
   {
     id: 'WORK_MEM_LIMIT',
@@ -160,10 +159,11 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     minImpact: 0.6,
     kind: 'corrective',
     severity: 'critical',
-    validate: (plan: string) => 
-      plan.includes('Disk') || 
-      plan.includes('External merge') || 
-      plan.includes('External sort')
+    validate: (plan: string) => {
+      const batchesMatch = plan.match(/Batches: (\d+)/);
+      const batches = batchesMatch ? parseInt(batchesMatch[1]) : 1;
+      return batches > 1 || plan.includes('Disk') || plan.includes('External sort');
+    }
   },
   {
     id: 'WASTE_FILTER',
@@ -187,7 +187,12 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     triggerNodes: ['complexity'],
     minImpact: 0.9,
     kind: 'corrective',
-    severity: 'critical'
+    severity: 'critical',
+    validate: (plan: string) => {
+        // En Postgres, un producto cartesiano suele aparecer como Nested Loop 
+        // SIN un "Index Cond" o "Join Filter" que use columnas de ambas tablas.
+        return plan.includes('Nested Loop') && !plan.includes('Index Cond') && !plan.includes('Join Filter');
+    }
   },
   {
     id: 'LOOP_EXPLOSION',
@@ -197,6 +202,11 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     minImpact: 0.8,
     severity: 'critical',
     kind: 'corrective',
+    validate: (plan: string) => {
+        const loopsMatch = plan.match(/loops=(\d+)/g);
+        if (!loopsMatch) return false;
+        return loopsMatch.some(m => parseInt(m.split('=')[1]) > 100000);
+    }
   },
   {
     id: 'PARTIAL_INDEX',
@@ -206,7 +216,15 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     minImpact: 0.6,
     severity: 'low',
     kind: 'opportunistic',
-    validate: (plan: string) => plan.includes('Filter: ') && !plan.includes('Join Filter: ')
+    validate: (plan: string) => {
+        // Buscamos filtros comunes de baja cardinalidad: booleanos, nulos o estados
+        const partialPatterns = [
+            /=\s*(true|false|NULL)/i,
+            /status\s*=\s*'\w+'/i,
+            /is_\w+\s*=\s*/i
+        ];
+        return plan.includes('Filter: ') && partialPatterns.some(regex => regex.test(plan));
+    }
   },
   {
     id: 'JOIN_EXPLOSION',
@@ -227,7 +245,11 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     minImpact: 0.8,
     kind: 'preventive',
     severity: 'critical',
-    validate: (plan: string) => plan.toLowerCase().includes('partition')
+    validate: (plan: string) => {
+        // Si hay un Append con muchos sub-nodos de escaneo de tablas particionadas
+        const partitionCount = (plan.match(/Scan on \w+_\d+/g) || []).length;
+        return plan.toLowerCase().includes('partition') || plan.includes('Append') && partitionCount > 3; 
+    }
   },
   {
     id: 'HEAP_FETCH_WARNING',
@@ -242,6 +264,44 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
         return hf > 1000;
     }
   },
+  {
+    id: 'CORRELATED_SUBPLAN',
+    text: "Subconsulta correlacionada detectada (Vampiro de CPU).",
+    solution: "El motor ejecuta el 'SubPlan' una vez por cada fila de la consulta principal ({val} veces). Convierte la subconsulta en un LEFT JOIN o un LATERAL JOIN para procesar los datos en bloque.",
+    triggerNodes: ['complexity', 'performance'],
+    minImpact: 0.6,
+    severity: 'critical',
+    kind: 'corrective',
+    validate: (plan: string) => {
+      // Busca la existencia de un SubPlan ejecutado en bucle
+      return plan.includes('SubPlan') && /loops=(\d{4,})/.test(plan);
+    }
+  },
+  {
+    id: 'JIT_OVERHEAD_DETECTION',
+    text: "Sobrecarga de JIT detectada.",
+    solution: "El JIT tardó {val}ms en compilar. Para esta consulta, el beneficio de JIT es marginal frente al costo de parsing de JSONB. Considera desactivar JIT para esta query o, mejor aún, crear un índice GIN.",
+    triggerNodes: ['perf', 'complexity'],
+    minImpact: 0.4,
+    severity: 'medium',
+    kind: 'preventive',
+    validate: (plan: string) => {
+      const jitTotal = parseFloat(plan.match(/Total ([\d.]+) ms/)?.[1] || "0");
+      const execTime = parseFloat(plan.match(/Execution Time: ([\d.]+) ms/)?.[1] || "0");
+      // Si JIT toma más del 10% del tiempo total, es una alerta
+      return jitTotal > (execTime * 0.1);
+    }
+  },
+  {
+    id: 'JSONB_PARALLEL_SCAN',
+    text: "Escaneo paralelo de JSONB (CPU Intensive).",
+    solution: "Los 4 workers están consumiendo CPU parseando JSONB. La solución definitiva es un índice funcional: 'CREATE INDEX idx_telemetry_type ON big_telemetry ((metadata->>'type'));'",
+    triggerNodes: ['waste', 'parallel'],
+    minImpact: 0.6,
+    severity: 'critical',
+    kind: 'corrective',
+    validate: (plan: string) => plan.includes('->>') && plan.includes('Parallel Seq Scan')
+  }
 ];
 
 

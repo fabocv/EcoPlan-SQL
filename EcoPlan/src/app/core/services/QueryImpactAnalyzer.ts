@@ -196,14 +196,15 @@ export class QueryImpactAnalyzer {
 
     const totalRowsRead = (rowsRemoved + actualRows);
 
-    const hasDiskSort = plan.includes('Storage: Disk') || plan.includes('External sort');
+    const batches = parseInt(plan.match(/Batches: (\d+)/i)?.[1] || "1");
+    const hasDiskSort = batches > 1 || plan.includes('Disk') || plan.includes('External sort');
 
     return {
       executionTime: execTime,
       execTimeInExplain: execTimeInExplain,
       planningTime: parseFloat(plan.match(/Planning time: ([\d.]+) ms/i)?.[1] || "0"),
       jitTime: parseFloat(plan.match(/JIT:[\s\S]*?Total: ([\d.]+) ms/i)?.[1] || "0"),
-      batches: parseInt(plan.match(/Batches: (\d+)/i)?.[1] || "1"),
+      batches: batches,
       hasDiskSort: hasDiskSort,
       tempFilesMb: parseFloat(plan.match(/Storage: ([\d.]+)kB/i)?.[1] || "0") / 1024,
       totalBuffersRead: parseInt(plan.match(/shared read=(\d+)/i)?.[1] || "0") + 
