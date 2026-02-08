@@ -1,4 +1,5 @@
-import { AnalysisResult } from "./QueryImpactAnalyzer";
+import { CloudProvider } from "./QueryImpactAnalyzer";
+
 
 export interface ImpactNode {
   id: string;
@@ -10,7 +11,12 @@ export interface ImpactNode {
   description?: string; // Para explicar el "porqué" al usuario
 }
 
-export interface SmartAnalysisResult extends AnalysisResult {
+export interface SmartAnalysisResult {
+  executionTimeMs: number;
+  economicImpact: number;
+  suggestions: {list: string[], solucion: string[]};
+  efficiencyScore: number;
+  provider: CloudProvider;
   execTimeInExplain: boolean;
   impactTree: ImpactNode;
   topOffenders: ImpactNode[];
@@ -38,35 +44,36 @@ export class ImpactTreeManager {
   }
 
   /**
-   * Calcula el valor de un nodo basado en sus hijos (Weighted Average)
+   * Calcula el valor de un nodo basado en sus hijos usando Burbujeo Dinámico.
+   * Implementa la Regla de Dominancia Estructural.
    */
   public resolve(node: ImpactNode): number {
+    // Caso base: Si es una hoja, devolvemos su valor normalizado
     if (!node.children || node.children.length === 0) {
       return node.value;
     }
 
-    const totalWeight = node.children.reduce((acc, child) => acc + child.weight, 0);
-    if (totalWeight === 0) return 0;
+    // AGREGADO JERÁRQUICO: Obtenemos los valores resueltos de todos los hijos
+    const childrenValues = node.children.map(child => this.resolve(child));
+    
+    // Burbujeo dinámico: El padre adopta el valor del hijo con mayor impacto
+    const maxValue = Math.max(...childrenValues);
 
-    const weightedAverage = node.children.reduce((acc, child) => {
-    return acc + (this.resolve(child) * child.weight);
-  }, 0) / (totalWeight || 1);
+    // REGLA DE DOMINANCIA: Si un nodo estructural >= 0.9, el impacto total >= 0.85
+    if (node.id === 'scalability' || node.id === 'query_impact') {
+      node.value = maxValue >= 0.95 ? Math.max(maxValue, 0.9) : maxValue;
+    } else {
+      node.value = maxValue;
+    }
 
-    const maxValue = Math.max(...node.children.map(c => c.value));
+    // Cap global de saturación: El impacto nunca excede 1.0
+    node.value = Math.min(1, node.value);
 
-    const criticalValues = node.children
-    .filter(c => c.isCritical)
-    .map(c => c.value);
-  
-    const maxCritical = criticalValues.length > 0 ? Math.max(...criticalValues) : 0;
-
-    const precalculo = (weightedAverage * 0.4) + (maxValue * 0.6);
-    node.value = Math.max(precalculo, maxCritical);
     return node.value;
   }
 
   /**
-   * Aplana el árbol para buscar los mayores problemas (Top Offenders)
+   * Aplana el árbol para facilitar la búsqueda de nodos críticos.
    */
   public flatten(node: ImpactNode, results: ImpactNode[] = []): ImpactNode[] {
     results.push(node);
@@ -77,22 +84,16 @@ export class ImpactTreeManager {
   }
 
   /**
-   * Identifica los 3 cuellos de botella más importantes
+   * Obtiene los 3 problemas (nodos hoja) con mayor valor de impacto.
    */
-  public getTopOffenders(node: ImpactNode): ImpactNode[] {
-    let leaves: ImpactNode[] = [];
-    const flatten = (n: ImpactNode) => {
-        if (!n.children || n.children.length === 0) {
-            leaves.push(n);
-        } else {
-            n.children.forEach(flatten);
-        }
-    };
-    flatten(node);
-    // Ordenar por impacto real: Valor * Peso
-    return leaves
-        .filter(l => l.value > 0.1)
-        .sort((a, b) => (b.value * b.weight) - (a.value * a.weight))
-        .slice(0, 3);
-}
+  public getTopOffenders(rootNode: ImpactNode): ImpactNode[] {
+    // Aplanamos y filtramos solo los nodos que no tengan hijos (causas raíz)
+    const allLeaves = this.flatten(rootNode).filter(n => !n.children || n.children.length === 0);
+    
+    // Ordenamos de mayor a menor impacto y tomamos los 3 principales
+    return allLeaves
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 3);
+  }
+
 }

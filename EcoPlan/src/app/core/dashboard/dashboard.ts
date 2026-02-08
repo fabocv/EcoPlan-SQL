@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { CloudProvider, QueryImpactAnalyzer, AnalysisResult, voidAnalysis } from '../services/QueryImpactAnalyzer';
-import { FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
+import { CloudProvider, QueryImpactAnalyzer } from '../services/QueryImpactAnalyzer';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
 import { SmartAnalysisResult } from '../services/ImpactTreeManager';
 
-const CURRENT_VERSION = "v0.8.2"
+const CURRENT_VERSION = "v0.8.4"
 interface EcoData {
   explain: string;
   cloud: CloudProvider;
@@ -88,7 +88,7 @@ export class Dashboard {
     this.isInvalidFormat.set(false);
     
     // El servicio ahora devuelve el objeto con el ImpactTree
-    const resultado = this.servicio.analyze(cleanText, cloud, frequency);
+    const resultado = this.servicio.analyzePlan(cleanText, cloud, frequency);
     
     // Actualizamos el signal con la nueva estructura
     this.analisis.set(resultado); 
@@ -123,7 +123,7 @@ export class Dashboard {
     }
 
     this.isInvalidFormat.set(false);
-    const res = this.servicio.analyze(cleanText, cloudService, frequency);
+    const res = this.servicio.analyzePlan(cleanText, cloudService, frequency);
     
     this.analisis.set({ ...res }); 
   }
