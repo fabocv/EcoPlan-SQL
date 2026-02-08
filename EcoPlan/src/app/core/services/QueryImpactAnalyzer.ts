@@ -51,6 +51,9 @@ export interface RawMetrics {
   plannedRows: number;
   actualRows: number;
   heapFetches: number;
+  hasJsonbParallel: boolean;
+  hasParallel: boolean;
+  isHeavySort: boolean;
 }
 
 @Injectable({
@@ -98,8 +101,8 @@ export class QueryImpactAnalyzer {
       }
     // 2. FASE ESTRUCTURAL (Impact Tree)
 
-    console.table(metrics)
-    console.table(structuralFlag)
+    console.log("structuralflag");
+    console.log(structuralFlag)
     const impactTree = this.buildEcoSQLTree(metrics, structuralFlag); 
     
     
@@ -107,11 +110,12 @@ export class QueryImpactAnalyzer {
     // 3. FASE DE CONTEXTO
     const manager = new ImpactTreeManager();
     const dominantNodes = manager.getTopOffenders(impactTree);
+    const relevantNodes = dominantNodes.filter(n => n.value > 0.6);
     const impactSaturation = 1 - Math.max(...dominantNodes.map(n => n.value));
 
     const context: SuggestionContext = {
       impactTree: impactTree,
-      dominantNodes: dominantNodes,
+      dominantNodes: relevantNodes,
       rawMetrics: metrics,
       structuralFlags: structuralFlag,
       impactSaturation: impactSaturation
@@ -199,11 +203,24 @@ export class QueryImpactAnalyzer {
     const batches = parseInt(plan.match(/Batches: (\d+)/i)?.[1] || "1");
     const hasDiskSort = batches > 1 || plan.includes('Disk') || plan.includes('External sort');
 
+    // tiempos jit
+    const jitMatch = plan.match(/JIT:[\s\S]*?Timing:[\s\S]*?Total ([\d.]+) ms/);
+    const jitTime = jitMatch ? parseFloat(jitMatch[1]) : 0;
+
+    // NUEVO: Detectar presión de JSONB en paralelo
+    const hasJsonbParallel = plan.includes('Parallel Seq Scan') && 
+                            (plan.includes('->>') || plan.includes('->'));
+
+    const rowsReturned = this.parseFloatFromRegex(plan, /actual time=[\d.]+..[\d.]+ rows=(\d+)/) || 1;
+    const isHeavySort = plan.includes('Sort Method') && 
+                    (rowsReturned > 10000);
+
     return {
       executionTime: execTime,
       execTimeInExplain: execTimeInExplain,
       planningTime: parseFloat(plan.match(/Planning time: ([\d.]+) ms/i)?.[1] || "0"),
-      jitTime: parseFloat(plan.match(/JIT:[\s\S]*?Total: ([\d.]+) ms/i)?.[1] || "0"),
+      jitTime, 
+      hasJsonbParallel,
       batches: batches,
       hasDiskSort: hasDiskSort,
       tempFilesMb: parseFloat(plan.match(/Storage: ([\d.]+)kB/i)?.[1] || "0") / 1024,
@@ -221,6 +238,8 @@ export class QueryImpactAnalyzer {
       actualRows: actualRows,
       plannedRows: plannedRows,
       heapFetches: parseInt(plan.match(/Heap Fetches: (\d+)/)?.[1] || "0"),
+      hasParallel: plan.includes('Parallel'),
+      isHeavySort,
     };
   }
 
@@ -290,9 +309,10 @@ export class QueryImpactAnalyzer {
         {
           id: 'scalability',
           label: 'Scalability Risk',
-          weight: 0.35, 
+          weight: 0.25, 
           value: 0,
-          description: 'Riesgo de degradación futura.',
+          isCritical: metrics.isHeavySort,
+          description: 'Complejidad algorítmica y densidad de ordenamiento.',
           children: [
             {
               id: 'recursive_expansion',
@@ -308,9 +328,14 @@ export class QueryImpactAnalyzer {
             { 
               id: 'complexity', 
               label: 'Structural Complexity', 
-              weight: 0.2,
+              weight: 0.25,
               isCritical: metrics.isCartesian, 
-              value: Math.max(metrics.isCartesian ? 1 : 0, manager.logNormalize(metrics.maxLoops, 100000)),
+              //value: Math.max(metrics.isCartesian ? 1 : 0, manager.logNormalize(metrics.maxLoops, 100000)),
+              value: Math.max(
+                  metrics.isHeavySort ? 0.7 : 0,
+                  manager.logNormalize(metrics.maxLoops, 10000), // Loops normales
+                  (metrics.jitTime > 0 && metrics.jitTime > (metrics.executionTime * 0.15)) ? 0.85 : 0 // JIT Penalty
+              ),
               description: 'Complejidad algorítmica.'
             },
             { 
@@ -318,17 +343,20 @@ export class QueryImpactAnalyzer {
               label: 'Data Waste', 
               weight: 0.2, 
               value: (metrics.executionTime < 100 && !structuralFlags.hasNestedLoop)
-            ? metrics.wasteRatio * 0.1  // Castigo leve para queries rápidas
-            : (structuralFlags.hasNestedLoop || structuralFlags.hasJoin 
-                ? metrics.wasteRatio    // Castigo total para queries complejas
-                : metrics.wasteRatio * 0.2),
+                ? metrics.wasteRatio * 0.1  // Castigo leve para queries rápidas
+                : (structuralFlags.hasNestedLoop || structuralFlags.hasJoin 
+                    ? metrics.wasteRatio    // Castigo total para queries complejas
+                    : structuralFlags.hasWorkerStarvation ? 1.0 : 
+                        (metrics.wasteRatio * (metrics.hasParallel ? 1.5 : 1.0))),
               description: 'Eficiencia de filtrado.'
             },
             {
               id: 'parallel',
               label: 'Resource Contention',
-              weight: 0.3,
-              value: structuralFlags.hasWorkerStarvation ? 1.0 : 0, // Impacto total si fallan los workers
+              weight: 0.25,
+              value: structuralFlags.hasWorkerStarvation 
+                ? 1.0 
+                : (metrics.hasJsonbParallel ? 0.9 : 0), // Castigo alto si hay JSONB paralelo sin índice
               isCritical: structuralFlags.hasWorkerStarvation,
               description: 'Fallo en la asignación de workers paralelos.'
             }
@@ -349,6 +377,8 @@ export class QueryImpactAnalyzer {
     };
 
     manager.resolve(root); 
+    console.log(metrics);
+    console.log(root)
     return root;
   }
 

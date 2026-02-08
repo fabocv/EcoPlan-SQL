@@ -63,7 +63,7 @@ const NODE_PRECEDENCE: Record<string, number> = {
   recursive_expansion: 100,
   parallel: 90,
   structural: 80,
-  complexity: 60,
+  complexity: 85,
   waste: 40,
   mem: 30,
   io: 20
@@ -71,7 +71,7 @@ const NODE_PRECEDENCE: Record<string, number> = {
 
 
 
-type SuggestionKind = 'corrective' | 'opportunistic' | 'preventive';
+type SuggestionKind = 'corrective' | 'opportunistic' | 'preventive' | 'optimization';
 
 export interface SuggestionTemplate {
   id: string;
@@ -281,26 +281,95 @@ export const SUGGESTION_LIBRARY: SuggestionTemplate[] = [
     id: 'JIT_OVERHEAD_DETECTION',
     text: "Sobrecarga de JIT detectada.",
     solution: "El JIT tardó {val}ms en compilar. Para esta consulta, el beneficio de JIT es marginal frente al costo de parsing de JSONB. Considera desactivar JIT para esta query o, mejor aún, crear un índice GIN.",
-    triggerNodes: ['perf', 'complexity'],
+    triggerNodes: ['complexity'],
     minImpact: 0.4,
     severity: 'medium',
     kind: 'preventive',
     validate: (plan: string) => {
-      const jitTotal = parseFloat(plan.match(/Total ([\d.]+) ms/)?.[1] || "0");
-      const execTime = parseFloat(plan.match(/Execution Time: ([\d.]+) ms/)?.[1] || "0");
-      // Si JIT toma más del 10% del tiempo total, es una alerta
-      return jitTotal > (execTime * 0.1);
+      const jitMatch = plan.match(/Total ([\d.]+) ms/);
+      const jitTotal = jitMatch ? parseFloat(jitMatch[1]) : 0;
+      return jitTotal > 300;
     }
   },
   {
     id: 'JSONB_PARALLEL_SCAN',
     text: "Escaneo paralelo de JSONB (CPU Intensive).",
     solution: "Los 4 workers están consumiendo CPU parseando JSONB. La solución definitiva es un índice funcional: 'CREATE INDEX idx_telemetry_type ON big_telemetry ((metadata->>'type'));'",
-    triggerNodes: ['waste', 'parallel'],
-    minImpact: 0.6,
+    triggerNodes: ['parallel'],
+    minImpact: 0.5,
     severity: 'critical',
     kind: 'corrective',
     validate: (plan: string) => plan.includes('->>') && plan.includes('Parallel Seq Scan')
+  },
+  {
+    id: 'HIGH_SELECTIVITY_SCAN',
+    text: "Escaneo completo para buscar una aguja en un pajar.",
+    solution: "El motor leyó y descartó más del 99% de las filas para encontrar muy pocos resultados. Falta un índice en la columna del filtro: 'CREATE INDEX ... WHERE column = value'.",
+    triggerNodes: ['waste', 'io'], // Se dispara por desperdicio o I/O
+    minImpact: 0.5,
+    severity: 'critical', // CRÍTICO para que aparezca sí o sí
+    kind: 'corrective',
+    validate: (plan: string) => {
+      // Extraemos filas eliminadas y filas devueltas
+      const removedMatch = plan.match(/Rows Removed by Filter: (\d+)/);
+      const rowsMatch = plan.match(/actual time=[\d.]+..[\d.]+ rows=(\d+)/);
+      
+      if (!removedMatch || !rowsMatch) return false;
+      
+      const removed = parseInt(removedMatch[1]);
+      const returned = parseInt(rowsMatch[1]);
+      
+      // Si descartamos más de 10,000 filas y la proporción es 1000:1
+      return removed > 10000 && removed > (returned * 1000);
+    }
+  },
+    {
+    id: 'MISSING_SORT_INDEX',
+    text: "Ordenamiento costoso sin índice (Full Sort).",
+    solution: "Estás ordenando {rows} filas manualmente. Crea un índice que coincida con el orden solicitado para eliminar el paso de 'Sort' completamente.\nSugerencia: CREATE INDEX idx_audit_created ON audit_logs (created_at DESC);",
+    triggerNodes: ['perf', 'scalability'],
+    minImpact: 0.4,
+    severity: 'high', // Es High porque ahorra CPU y RAM
+    kind: 'optimization', // Es una optimización estructural, no solo correctiva
+    validate: (plan: string) => {
+      // Detectamos un Sort explícito sobre un Seq Scan
+      const hasSort = plan.includes('Sort Key:');
+      const hasSeqScan = plan.includes('Seq Scan');
+      const rowsMatch = plan.match(/Sort[\s\S]*?rows=(\d+)/);
+      const rows = rowsMatch ? parseInt(rowsMatch[1]) : 0;
+
+      // Si ordenamos más de 10,000 filas secuencialmente, falta un índice
+      return hasSort && hasSeqScan && rows > 10000;
+    }
+  },
+  {
+    id: 'PARALLEL_BRUTE_FORCE',
+    text: "Uso ineficiente de paralelismo (Fuerza Bruta).",
+    solution: "Estás usando Parallel Seq Scan para filtrar datos. Aunque es rápido, consume CPU excesiva y bloquea núcleos. Un índice simple sería más rápido y barato.",
+    triggerNodes: ['waste', 'parallel', 'eco'],
+    minImpact: 0.4, 
+    severity: 'critical',
+    kind: 'corrective',
+    validate: (plan: string) => {
+      // Detectamos Parallel Scan combinado con alto descarte de filas
+      const isParallel = plan.includes('Parallel Seq Scan');
+      const hasFilter = plan.includes('Filter:');
+      const removedMatch = plan.match(/Rows Removed by Filter: (\d+)/);
+      const removed = removedMatch ? parseInt(removedMatch[1]) : 0;
+      
+      // Si es paralelo y descarta muchas filas, es fuerza bruta
+      return isParallel && hasFilter && removed > 10000;
+    }
+  },
+  {
+    id: 'ORDER_BY_INDEX_MISSING',
+    text: "Ordenamiento masivo detectado (External Sort).",
+    solution: "El motor está ordenando {val} filas en disco. Crear un índice en la columna de ordenamiento ('created_at') eliminaría este paso por completo.",
+    triggerNodes: ['complexity', 'scalability'],
+    minImpact: 0.4,
+    severity: 'high',
+    kind: 'optimization',
+    validate: (plan) => plan.includes('Sort Key:') && plan.includes('external merge')
   }
 ];
 
