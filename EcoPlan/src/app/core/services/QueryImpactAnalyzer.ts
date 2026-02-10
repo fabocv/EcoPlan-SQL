@@ -37,6 +37,7 @@ export interface RawMetrics {
   totalBuffersRead: number;
   wasteRatio: number;
   isCartesian: boolean;
+  isInefficeientJoin:boolean;
   workers: number;
   recursiveDepth: number;
   maxLoops: number;
@@ -51,14 +52,15 @@ export interface RawMetrics {
   isHeavySort: boolean;
   isCrossJoin: boolean;
   isHighWaste: boolean;
+  maxDepth?: number;
 }
 
 export interface StructuralFlags {
   isIndexScan: boolean;
   heavyHeapUsage: boolean;
   heavyFiltering: boolean;
-  heapFetches:number;  
-  rowsRemoved:number;
+  heapFetches: number;
+  rowsRemoved: number;
   hasNestedLoop?: boolean;
   hasCartesianProduct?: boolean;
   hasSeqScanInLoop?: boolean;
@@ -75,11 +77,10 @@ export interface StructuralFlags {
   providedIn: 'root',
 })
 export class QueryImpactAnalyzer {
-  // private treeManager = new ImpactTreeManager(); // No es necesario instanciarlo aquí si usas métodos estáticos o lo creas dentro
   private suggestionGenerator = inject(SuggestionGen);
 
   /**
-   * Director de Orquesta
+   * Director 
    */
   public analyzePlan(
     plan: string,
@@ -102,9 +103,9 @@ export class QueryImpactAnalyzer {
 
     const structuralFlags: StructuralFlags = {
       isIndexScan: plan.includes('Index Scan'),
-      heavyHeapUsage: metrics.heapFetches > (metrics.actualRows * 0.5), // Umbral: más del 50% de las filas requirieron ir al heap
+      heavyHeapUsage: metrics.heapFetches > metrics.actualRows * 0.5, // Umbral: más del 50% de las filas requirieron ir al heap
       heavyFiltering: (metrics.rowsRemovedByFilter || 0) > 0,
-      heapFetches,    
+      heapFetches,
       rowsRemoved,
       hasNestedLoop: plan.includes('Nested Loop'),
       hasCartesianProduct: metrics.isCartesian,
@@ -119,7 +120,8 @@ export class QueryImpactAnalyzer {
     };
 
     // 2. FASE ESTRUCTURAL (Impact Tree)
-    const impactTree = this.buildEcoSQLTree(metrics, structuralFlags);
+    const {impactTree, maxDepth} = this.buildEcoSQLTree(metrics, structuralFlags);
+    metrics.maxDepth = maxDepth;
 
     // 3. FASE DE CONTEXTO
     const manager = new ImpactTreeManager();
@@ -137,6 +139,9 @@ export class QueryImpactAnalyzer {
       plan: plan,
       impactSaturation,
     };
+
+    console.log("nodos dominantes", dominantNodes)
+    console.table(dominantNodes)
 
     // 4. GENERACIÓN DE SUGERENCIAS
     const explainedSuggestions: ExplainedSuggestion[] =
@@ -308,6 +313,10 @@ export class QueryImpactAnalyzer {
       }
     })();
 
+    const wasteRatio = totalRowsRead > 0
+          ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5)
+          : 0
+
     return {
       executionTime: execTime,
       execTimeInExplain: execTimeInExplain,
@@ -320,10 +329,8 @@ export class QueryImpactAnalyzer {
       diskSortSize,
       tempFilesMb: tempFilesMb,
       totalBuffersRead: totalBuffersRead,
-      wasteRatio:
-        totalRowsRead > 0
-          ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5)
-          : 0,
+      wasteRatio: wasteRatio,
+      isInefficeientJoin: rowsRemoved > 10000 && wasteRatio > 1.0,
       isCartesian:
         isCrossJoin ||
         planUpper.includes('JOIN FILTER') ||
@@ -374,7 +381,7 @@ export class QueryImpactAnalyzer {
     return match ? parseFloat(match[1]) : 0;
   }
 
-  buildEcoSQLTree(metrics: RawMetrics, structuralFlags: StructuralFlags): ImpactNode {
+  buildEcoSQLTree(metrics: RawMetrics, structuralFlags: StructuralFlags): {impactTree:ImpactNode, maxDepth: number} {
     const manager = new ImpactTreeManager();
 
     const root: ImpactNode = {
@@ -501,6 +508,6 @@ export class QueryImpactAnalyzer {
     };
 
     manager.resolve(root);
-    return root;
+    return { impactTree:root, maxDepth: manager.calculateMaxDepth(root)};
   }
 }

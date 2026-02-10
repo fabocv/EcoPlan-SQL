@@ -94,6 +94,20 @@ export class ImpactTreeManager {
     return results;
   }
 
+  public calculateMaxDepth(node: ImpactNode): number {
+    // Caso base: Si no hay nodo, profundidad 0
+    if (!node) return 0;
+
+    // Caso base: Si no tiene hijos, profundidad 1 (el nodo mismo)
+    if (!node.children || node.children.length === 0) {
+        return 1;
+    }
+
+    // Paso recursivo: 1 + la profundidad máxima de sus hijos
+    return 1 + Math.max(...node.children.map(child => this.calculateMaxDepth(child)));
+}
+
+
   /**
    * Obtiene los 3 problemas (nodos hoja) con mayor valor de impacto.
    */

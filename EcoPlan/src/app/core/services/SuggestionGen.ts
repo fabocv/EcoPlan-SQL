@@ -10,9 +10,8 @@ import { WorkMemExplainer } from './explainers/WorkMemExplainer';
 import { DiskSortExplainer } from './explainers/DiskSortExplainer';
 import { HighWasteExplainer } from './explainers/HighWasteExplainer';
 import { CartesianExplainer } from './explainers/CartesianExplainer';
-//import { DiskSortExplainer } from './explainers/DiskSortExplainer'; // Antes WorkMemExplainer
-//import { HighWasteExplainer } from './explainers/HighWasteExplainer'; // Antes InefficientIndexExplainer
-//import { CartesianExplainer } from './explainers/CartesianExplainer'; // O usar GenericExplainer
+import { PoorFilteringExplainer } from './explainers/PoorFilteringExplainer';
+import { InefficientJoinExplainer } from './explainers/InefficientJoinExplainer';
 
 // --- 1. DEFINICIÓN DE TIPOS Y INTERFACES ---
 
@@ -20,14 +19,14 @@ export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 export type SuggestionKind = 'corrective' | 'opportunistic' | 'preventive' | 'optimization';
 
 /**
- * Define la regla estática (el "molde")
+ * Define la regla estática
  */
 interface Template {
   id: string;
   solution: string;
   kind: SuggestionKind;
   text: string;
-  triggerNodeId?: string; // Pista: 'recursive_expansion', 'mem', 'waste', etc.
+  triggerNodeId?: string; // Ej: 'recursive_expansion', 'mem', 'waste', etc.
 }
 
 /**
@@ -99,6 +98,8 @@ const EXPLAINERS: Record<string, SuggestionExplainer> = {
   DISK_SORT: new DiskSortExplainer(),
   HIGH_WASTE_SCAN: new HighWasteExplainer(),
   CARTESIAN_PRODUCT: new CartesianExplainer(),
+  POOR_FILTERING: new PoorFilteringExplainer(),
+  INEFFICIENT_JOIN: new InefficientJoinExplainer(),
 };
 
 // Explainer por defecto para casos no mapeados
@@ -128,20 +129,21 @@ export class SuggestionGen {
   ): ExplainedSuggestion[] {
     // 1. Evaluar qué plantillas aplican según las métricas
     const evaluated: EvaluatedSuggestion[] = this.evaluateTemplates(context, flags, plan);
-
+    console.log('EVALUATED IN GENERATESUGESTIONS')
+    console.table(evaluated);
     if (evaluated.length === 0) return [];
 
     // 2. Filtrar por importancia si hay saturación (evitar ruido visual)
     const filtered = this.filterByKind(evaluated, context.impactSaturation);
 
-    console.log("filtered ", filtered)
+    console.log('filtered ', filtered);
 
     if (filtered.length === 0) return [];
 
     // 3. Colapsar duplicados (si la misma regla salta varias veces, tomar la peor)
     const collapsed = this.collapseSuggestions(filtered);
 
-    console.log("collapsed", collapsed)
+    console.log('collapsed', collapsed);
 
     // 4. Generar explicaciones enriquecidas (Evidencia + Markdown)
     return this.buildExplanations(collapsed, context);
@@ -149,12 +151,16 @@ export class SuggestionGen {
 
   // --- MOTOR DE REGLAS ---
 
-  private evaluateTemplates(context: ExplanationContext, flags: StructuralFlags,  plan: string): EvaluatedSuggestion[] {
+  private evaluateTemplates(
+    context: ExplanationContext,
+    flags: StructuralFlags,
+    plan: string,
+  ): EvaluatedSuggestion[] {
     const evaluatedSuggestions: EvaluatedSuggestion[] = [];
     const templates = this.getTemplates();
 
     for (const template of templates) {
-      const isRelevant = this.isTemplateRelevant(template, context,flags, plan);
+      const isRelevant = this.isTemplateRelevant(template, context, flags, plan);
       if (isRelevant) {
         // 1. Identificar el nodo culpable
         // Si el template tiene una pista ('mem', 'waste'), buscamos ese nodo específico.
@@ -203,12 +209,33 @@ export class SuggestionGen {
         text: 'Bomba Recursiva Detectada',
         triggerNodeId: 'recursive_expansion',
       },
-      {            
-        id: 'INEFFICIENT_INDEX',            
-        solution: 'Ampliar índice para incluir columnas filtradas (Covering Index).',            
-        kind: 'optimization',            
-        text: 'Índice Incompleto (Heap Fetches altos)',            
-        triggerNodeId: 'io' // Apunta al cuello de botella de I/O        
+      {
+        id: 'POOR_FILTERING',
+        kind: 'optimization',
+        triggerNodeId: 'waste',
+        text: 'Filtrado Ineficiente (Data Waste)',
+        solution: 'La consulta lee un volumen excesivo de datos para las filas que retorna. Verifica que las columnas del WHERE tengan índices apropiados y que sean "SARGable" (evita funciones sobre columnas indexadas).'
+      },
+      {
+        id: 'N_PLUS_ONE',
+        solution: 'Reemplazar bucles por JOINs explícitos o usar LATERAL.',
+        kind: 'corrective',
+        text: 'Patrón N+1 (Loops Excesivos)',
+        triggerNodeId: 'cpu', // Comparte trigger con CPU Pressure, el Explainer decide cuál mostrar
+      },
+      {
+        id: 'HIGH_CPU_PRESSURE',
+        solution: 'Optimizar operaciones de Hash/Sort o reducir el conjunto de datos.',
+        kind: 'corrective',
+        text: 'Saturación de CPU (CPU Bound)',
+        triggerNodeId: 'cpu', // Apunta al bottleneck { id: "cpu", value: 0.89... }
+      },
+      {
+        id: 'INEFFICIENT_INDEX',
+        solution: 'Ampliar índice para incluir columnas filtradas (Covering Index).',
+        kind: 'optimization',
+        text: 'Índice Incompleto (Heap Fetches altos)',
+        triggerNodeId: 'io', // Apunta al cuello de botella de I/O
       },
       {
         id: 'DISK_SORT',
@@ -231,6 +258,20 @@ export class SuggestionGen {
         text: 'Filtrado Ineficiente (High Waste)',
         triggerNodeId: 'waste',
       },
+      {
+        id: 'HIGH_CPU_PRESSURE',
+        text: 'Saturación de CPU (CPU Bound)',
+        kind: 'corrective',
+        solution: 'Optimizar operaciones de Hash/Sort o reducir el conjunto de datos.',
+        triggerNodeId: 'cpu',
+      },
+      {
+        id: 'HIGH_STRUCTURAL_COMPLEXITY',
+        solution: 'Usar CTEs (WITH) para aplanar la consulta o reducir anidamiento.',
+        kind: 'optimization',
+        text: 'Alta Complejidad Estructural',
+        triggerNodeId: 'complexity',
+      },
     ];
   }
 
@@ -241,7 +282,7 @@ export class SuggestionGen {
     plan: string,
   ): boolean {
     const m = context.rawMetrics;
-    
+
     switch (template.id) {
       case 'RECURSIVE_BOMB':
         // Lógica: Recursión + (Loop Infinito O Escaneo Secuencial dentro del loop)
@@ -249,12 +290,22 @@ export class SuggestionGen {
           (m.recursiveDepth || 0) > 0 && (m.seqScanInLoop || false || (m.maxLoops || 0) > 1000)
         );
 
+      case 'N_PLUS_ONE':
+        return this.isNPlusOnePattern(context.impactTree, context.rawMetrics, context.plan);
+
+      case 'POOR_FILTERING':
+        const wasteNode =  context.dominantNodes.find(n => n.id === 'waste')
+        return !!wasteNode && wasteNode.value >= 0.4;
+
       case 'DISK_SORT':
         // Lógica: Uso de disco explícito o archivos temporales
-        return m.hasDiskSort || false || (m.tempFilesMb || 0) > 0;
+        return m.hasDiskSort || (m.tempFilesMb || 0) > 0;
 
       case 'CARTESIAN_PRODUCT':
-        return m.isCartesian || false;
+        return m.isCartesian;
+
+      case 'INEFFICIENT_JOIN':
+        return m.isInefficeientJoin
 
       case 'HIGH_WASTE_SCAN':
         // Lógica: Se descartan más del 80% de las filas leídas
@@ -269,75 +320,119 @@ export class SuggestionGen {
 
   private evaluateSeverity(template: Template, context: ExplanationContext): Severity {
     const m = context.rawMetrics;
-    
+
     // ---------------------------------------------------------
     // 1. Severidad Base por Tipo (Baseline)
     // ---------------------------------------------------------
     let severity: Severity = 'low'; // Default seguro
 
     switch (template.kind) {
-        case 'corrective':    severity = 'high'; break;   // Algo está roto
-        case 'preventive':    severity = 'medium'; break; // Se va a romper pronto
-        case 'optimization':  severity = 'medium'; break; // Funciona, pero lento
-        case 'opportunistic': severity = 'info'; break;   // Sería bonito tenerlo
+      case 'corrective':
+        severity = 'high';
+        break; // Algo está roto
+      case 'preventive':
+        severity = 'medium';
+        break; // Se va a romper pronto
+      case 'optimization':
+        severity = 'medium';
+        break; // Funciona, pero lento
+      case 'opportunistic':
+        severity = 'info';
+        break; // Sería bonito tenerlo
     }
 
     // ---------------------------------------------------------
     // 2. Ajustes Dinámicos por Template (Reglas de Negocio)
     // ---------------------------------------------------------
-    
+
     // CASO: Índices Ineficientes
     if (template.id === 'INEFFICIENT_INDEX') {
-        const totalRead = m.actualRows + (m.rowsRemovedByFilter || 0);
-        const wasteRatio = totalRead > 0 ? (m.rowsRemovedByFilter || 0) / totalRead : 0;
-        
-        // Si descartas el 90% de lo que lees o vas a disco excesivamente -> HIGH
-        if (wasteRatio > 0.90 || (m.heapFetches || 0) > 5000) {
-            severity = 'high';
-        }
-        // Si esto está causando lectura masiva en disco -> CRITICAL
-        if ((m.heapFetches || 0) > 50000) {
-            severity = 'critical';
-        }
+      const totalRead = m.actualRows + (m.rowsRemovedByFilter || 0);
+      const wasteRatio = totalRead > 0 ? (m.rowsRemovedByFilter || 0) / totalRead : 0;
+
+      // Si descartas el 90% de lo que lees o vas a disco excesivamente -> HIGH
+      if (wasteRatio > 0.9 || (m.heapFetches || 0) > 5000) {
+        severity = 'high';
+      }
+      // Si esto está causando lectura masiva en disco -> CRITICAL
+      if ((m.heapFetches || 0) > 50000) {
+        severity = 'critical';
+      }
+    }
+
+    if (template.id == 'N_PLUS_ONE') {
+      if (m.maxLoops < 10000) {
+        severity = 'critical';
+      }
     }
 
     // CASO: Sort en Disco (Disk Merge)
     if (template.id === 'DISK_SORT') {
-        if ((m.tempFilesMb || 0) > 10) severity = 'high';
-        // Regla de oro: >50MB en disco es inaceptable en OLTP
-        if ((m.tempFilesMb || 0) > 50) severity = 'critical';
+      const mb = m.tempFilesMb || 0;
+      if (mb > 50) {
+        severity = 'critical';
+      } else if (mb > 10) {   
+        severity = 'high';
+      } else {    
+        // Si es > 0 pero < 10, sigue siendo un problema de rendimiento (Medium)
+        severity = 'medium';
+      }
     }
 
     // CASO: Bombas Recursivas (CTE)
     if (template.id === 'RECURSIVE_BOMB') {
-        // Profundidad peligrosa
-        if ((m.recursiveDepth || 0) > 1000) severity = 'high';
-        // Stack overflow inminente o loop infinito
-        if ((m.recursiveDepth || 0) > 20000) severity = 'critical';
+      // Profundidad peligrosa
+      if ((m.recursiveDepth || 0) > 1000) severity = 'high';
+      // Stack overflow inminente o loop infinito
+      if ((m.recursiveDepth || 0) > 20000) severity = 'critical';
     }
 
     // CASO: Producto Cartesiano
     if (template.id === 'CARTESIAN_PRODUCT') {
-        // Casi siempre es un error de código
-        severity = 'critical'; 
-        // Excepción: Tablas minúsculas (ej: < 10 filas)
-        if (m.actualRows < 100) severity = 'medium';
+      // Casi siempre es un error de código
+      severity = 'critical';
+      // Excepción: Tablas minúsculas (ej: < 10 filas)
+      if (m.actualRows < 100) severity = 'medium';
     }
 
     // ---------------------------------------------------------
     // 3. Ajuste por Saturación Global (Pressure Booster)
     // ---------------------------------------------------------
-    
+
     // Si el sistema está sufriendo (High Load), no ignoramos nada que consuma recursos.
     // Subimos la categoría de 'medium' a 'high' para que pase los filtros de pánico.
     if (context.impactSaturation > 0.8) {
-        if (severity === 'medium') severity = 'high';
-        // Nota: No subimos 'info' o 'low' para no generar ruido innecesario durante una crisis.
+      if (severity === 'medium') severity = 'high';
+      // Nota: No subimos 'info' o 'low' para no generar ruido innecesario durante una crisis.
     }
 
     return severity;
-}
+  }
 
+  private isNPlusOnePattern(node: ImpactNode, metrics: RawMetrics, plan: string): boolean {
+    // 1. Definir umbrales
+    const LOOP_THRESHOLD = 50; // Si se repite más de 50 veces, es sospechoso
+    const ROWS_PER_LOOP_THRESHOLD = 2; // Si devuelve ~1 fila por loop, es un lookup
+
+    // 2. Extraer métricas
+    const loops = metrics.maxLoops || 1;
+    const rows = metrics.actualRows || 0;
+
+    // Evitar división por cero
+    if (loops < LOOP_THRESHOLD) return false;
+
+    // 3. Calcular filas promedio por ejecución
+    const rowsPerLoop = rows / loops;
+
+    // 4. La Condición del Crimen:
+    // "Se ejecuta muchas veces (N) para traer 1 dato cada vez (+1)"
+    const isLookupLoop = rowsPerLoop <= ROWS_PER_LOOP_THRESHOLD;
+
+    // Opcional: Verificar que sea un Index Scan o Scan (evitar falsos positivos en Sorts/Aggregates)
+    const isScan = plan.includes('Scan');
+
+    return isLookupLoop && isScan;
+  }
 
   // --- GENERACIÓN DE CONTENIDO (Markdown) ---
 
@@ -456,7 +551,6 @@ export class SuggestionGen {
     }
     return suggestions;
   }
-
 
   private collapseSuggestions(suggestions: EvaluatedSuggestion[]): EvaluatedSuggestion[] {
     const map = new Map<string, EvaluatedSuggestion>();
