@@ -32,7 +32,7 @@ export interface RawMetrics {
   jitTime: number;
   batches: number;
   hasDiskSort: boolean;
-  diskSortSize:number;
+  diskSortSize: number;
   tempFilesMb: number;
   totalBuffersRead: number;
   wasteRatio: number;
@@ -44,16 +44,21 @@ export interface RawMetrics {
   seqScanInLoop: boolean;
   plannedRows: number;
   actualRows: number;
-  rowsRemovedByFilter:number;
+  rowsRemovedByFilter: number;
   heapFetches: number;
   hasJsonbParallel: boolean;
   hasParallel: boolean;
   isHeavySort: boolean;
-  isCrossJoin : boolean;
+  isCrossJoin: boolean;
   isHighWaste: boolean;
 }
 
 export interface StructuralFlags {
+  isIndexScan: boolean;
+  heavyHeapUsage: boolean;
+  heavyFiltering: boolean;
+  heapFetches:number;  
+  rowsRemoved:number;
   hasNestedLoop?: boolean;
   hasCartesianProduct?: boolean;
   hasSeqScanInLoop?: boolean;
@@ -90,7 +95,17 @@ export class QueryImpactAnalyzer {
         ? Math.abs(metrics.actualRows - metrics.plannedRows) / metrics.plannedRows
         : 0;
 
-    const structuralFlag: StructuralFlags = {
+    const heapFetchesMatch = plan.match(/Heap Fetches:\s*(\d+)/i);
+    const heapFetches = heapFetchesMatch ? parseInt(heapFetchesMatch[1]) : 0;
+    const rowsRemovedMatch = plan.match(/Rows Removed by Filter:\s*(\d+)/i);
+    const rowsRemoved = rowsRemovedMatch ? parseInt(rowsRemovedMatch[1]) : 0;
+
+    const structuralFlags: StructuralFlags = {
+      isIndexScan: plan.includes('Index Scan'),
+      heavyHeapUsage: metrics.heapFetches > (metrics.actualRows * 0.5), // Umbral: más del 50% de las filas requirieron ir al heap
+      heavyFiltering: (metrics.rowsRemovedByFilter || 0) > 0,
+      heapFetches,    
+      rowsRemoved,
       hasNestedLoop: plan.includes('Nested Loop'),
       hasCartesianProduct: metrics.isCartesian,
       hasSeqScanInLoop: metrics.seqScanInLoop,
@@ -104,7 +119,7 @@ export class QueryImpactAnalyzer {
     };
 
     // 2. FASE ESTRUCTURAL (Impact Tree)
-    const impactTree = this.buildEcoSQLTree(metrics, structuralFlag);
+    const impactTree = this.buildEcoSQLTree(metrics, structuralFlags);
 
     // 3. FASE DE CONTEXTO
     const manager = new ImpactTreeManager();
@@ -123,13 +138,13 @@ export class QueryImpactAnalyzer {
       impactSaturation,
     };
 
-    // 4. GENERACIÓN DE SUGERENCIAS (FIXED)
-    // Ya recibimos las sugerencias explicadas y enriquecidas
+    // 4. GENERACIÓN DE SUGERENCIAS
     const explainedSuggestions: ExplainedSuggestion[] =
-      this.suggestionGenerator.generateSmartSuggestions(context, plan);
+      this.suggestionGenerator.generateSmartSuggestions(context, structuralFlags, plan);
 
     // 5. ENSAMBLE FINAL
     return {
+      structuralFlags: structuralFlags,
       executionTimeMs: metrics.executionTime,
       economicImpact: this.calculateEconomicImpact(metrics, frequency, provider),
       efficiencyScore: (1 - impactTree.value) * 100,
@@ -141,8 +156,6 @@ export class QueryImpactAnalyzer {
       breakdown: `Análisis completado. Eficiencia del ${((1 - impactTree.value) * 100).toFixed(2)}%.`,
     };
   }
-
-  // ... (RESTO DE LOS MÉTODOS SIN CAMBIOS: calculateEconomicImpact, extractAllMetrics, etc.) ...
 
   calculateEconomicImpact(
     metrics: RawMetrics,
@@ -167,7 +180,6 @@ export class QueryImpactAnalyzer {
     let actualRows = 0;
     let execTimeInExplain = false;
 
-    // Uso de try-catch para manejar excepciones
     try {
       const actualRowsMatches = plan.match(/\(actual\s+time=[\d.]+\.\.[\d.]+\s+rows=(\d+)/gi);
       actualRows = (() => {
@@ -183,10 +195,10 @@ export class QueryImpactAnalyzer {
             const value = parseInt(match2[1], 10);
             if (!isNaN(value)) return value;
           }
-          return 0; // Si no coinciden, devolvemos 0
+          return 0;
         } catch (error) {
           console.warn('Error parsing actualRows:', error);
-          return 0; // Fallback final si hay error en el parsing
+          return 0;
         }
       })();
     } catch (error) {
@@ -230,7 +242,7 @@ export class QueryImpactAnalyzer {
 
     let batches = 1;
     let hasDiskSort = false;
-    let diskSortSize = 0
+    let diskSortSize = 0;
     try {
       batches = parseInt(plan.match(/Batches: (\d+)/i)?.[1] || '1');
       diskSortSize = parseInt(plan.match(/Disk:\s*\d+/i)?.[1] || '1');
@@ -256,7 +268,45 @@ export class QueryImpactAnalyzer {
       if (totalRead === 0) return false;
       const wasteRatio = rowsRemoved / totalRead;
       return wasteRatio > 0.8 && rowsRemoved > 1000;
-    }
+    };
+
+    const tempFilesMb = (() => {
+      try {
+        const diskMatch = plan.match(/Disk:\s*([\d.]+)\s*(kB|MB|GB)/i);
+        const storageMatch = plan.match(/Storage:\s*([\d.]+)\s*(kB|MB|GB)/i);
+        const match = diskMatch || storageMatch;
+        if (!match?.[1] || !match?.[2]) return 0;
+        const value = parseFloat(match[1]);
+        const unit = match[2].toUpperCase();
+        if (unit === 'KB') return value / 1024;
+        if (unit === 'MB') return value;
+        if (unit === 'GB') return value * 1024;
+        return 0;
+      } catch (error) {
+        console.warn('Error parsing tempFilesMb:', error);
+        return 0;
+      }
+    })();
+    const totalBuffersRead = (() => {
+      try {
+        const buffersMatch = plan.match(/Buffers:\s*shared hit=(\d+)\s+read=(\d+)/i);
+        if (buffersMatch?.[1] && buffersMatch?.[2]) {
+          return parseInt(buffersMatch[1], 10) + parseInt(buffersMatch[2], 10);
+        }
+        const rowsMatch = plan.match(/rows=(\d+)/);
+        const widthMatch = plan.match(/width=(\d+)/);
+        if (rowsMatch?.[1] && widthMatch?.[1]) {
+          const rows = parseInt(rowsMatch[1], 10);
+          const width = parseInt(widthMatch[1], 10);
+          const bytesRead = rows * width;
+          return Math.ceil(bytesRead / 8192);
+        }
+        return 0;
+      } catch (error) {
+        console.warn('Error parsing totalBuffersRead:', error);
+        return 0;
+      }
+    })();
 
     return {
       executionTime: execTime,
@@ -268,14 +318,16 @@ export class QueryImpactAnalyzer {
       batches,
       hasDiskSort,
       diskSortSize,
-      tempFilesMb: 0, // Agrega aquí tu lógica del manejo de errores
-      totalBuffersRead: 0, // Agrega aquí tu lógica del manejo de errores
+      tempFilesMb: tempFilesMb,
+      totalBuffersRead: totalBuffersRead,
       wasteRatio:
         totalRowsRead > 0
           ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5)
           : 0,
       isCartesian:
-        isCrossJoin || planUpper.includes('JOIN FILTER') || (planUpper.includes('NESTED LOOP') && maxLoops > 100),
+        isCrossJoin ||
+        planUpper.includes('JOIN FILTER') ||
+        (planUpper.includes('NESTED LOOP') && maxLoops > 100),
       workers: parseInt(plan.match(/Workers Launched: (\d+)/i)?.[1] || '0'),
       recursiveDepth: planUpper.includes('RECURSIVE UNION') ? 10 : 0,
       maxLoops,
@@ -283,7 +335,7 @@ export class QueryImpactAnalyzer {
       seqScanInLoop: planUpper.includes('SEQ SCAN') && planUpper.includes('RECURSIVE UNION'),
       actualRows,
       plannedRows,
-      rowsRemovedByFilter:rowsRemoved,
+      rowsRemovedByFilter: rowsRemoved,
       heapFetches: parseInt(plan.match(/Heap Fetches: (\d+)/)?.[1] || '0'),
       hasParallel: plan.includes('Parallel'),
       isHeavySort: plan.includes('Sort Method') && totalRowsRead > 10000, // Simplificado

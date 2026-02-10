@@ -8,7 +8,7 @@ import { ToastService } from '../services/toast.service';
 import { SmartAnalysisResult, ImpactNode } from '../services/ImpactTreeManager';
 import { MarkdownPipe } from '../pipes/markdown.pipes';
 
-const CURRENT_VERSION = "v1.0.1";
+const CURRENT_VERSION = "v1.0.2";
 
 interface EcoData {
   explain: string;
@@ -29,7 +29,6 @@ interface EcoData {
   templateUrl: 'dashboard.html',
   styles: [`
     :host { display: block; }
-    /* Clase para resaltar nodo seleccionado en el árbol si decides implementarlo en el HTML */
     .node-focused {
       box-shadow: 0 0 0 2px #0ea5e9; /* Sky-500 ring */
       background-color: #f0f9ff; /* Sky-50 */
@@ -53,7 +52,6 @@ export class Dashboard {
   isInvalidFormat = signal<boolean>(false);
   isProcessing = signal<boolean>(false);
   
-  // Nuevo: Para resaltar nodos desde las sugerencias
   activeNodeId = signal<string | null>(null); 
   
   // Static Data
@@ -91,7 +89,6 @@ export class Dashboard {
 
   setFrecuency(raw: number) {
     this.ecoModel.update(f => ({ ...f, frequency: raw }));
-    // Debounce manual simple
     if (this.analisis()) this.recalcularCosto();
   }
 
@@ -181,7 +178,7 @@ export class Dashboard {
   getImpactColor(value: number): string {
     if (value > 0.8) return 'bg-rose-500';     
     if (value > 0.5) return 'bg-amber-500';    
-    if (value > 0.2) return 'bg-sky-400'; // Cambiado a Sky para mejor contraste con Tailwind default     
+    if (value > 0.2) return 'bg-sky-400';
     return 'bg-emerald-500';                   
   }
 

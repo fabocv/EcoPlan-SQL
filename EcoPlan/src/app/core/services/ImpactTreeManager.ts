@@ -1,4 +1,4 @@
-import { CloudProvider } from "./QueryImpactAnalyzer";
+import { CloudProvider, StructuralFlags } from "./QueryImpactAnalyzer";
 import { ExplainedSuggestion } from "./SuggestionGen";
 
 
@@ -13,6 +13,7 @@ export interface ImpactNode {
 }
 
 export interface SmartAnalysisResult {
+  structuralFlags: StructuralFlags;
   executionTimeMs: number;
   economicImpact: number;
   suggestions: ExplainedSuggestion[];
