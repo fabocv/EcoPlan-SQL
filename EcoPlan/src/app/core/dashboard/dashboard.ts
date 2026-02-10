@@ -4,9 +4,11 @@ import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
+// Asegúrate de que SmartAnalysisResult esté actualizado con la nueva estructura de suggestions
 import { SmartAnalysisResult, ImpactNode } from '../services/ImpactTreeManager';
+import { MarkdownPipe } from '../pipes/markdown.pipes';
 
-const CURRENT_VERSION = "v0.9.0";
+const CURRENT_VERSION = "v1.0.1";
 
 interface EcoData {
   explain: string;
@@ -16,18 +18,21 @@ interface EcoData {
 
 @Component({
   selector: 'app-dashboard',
-  standalone: true, // Aseguramos que sea standalone
+  standalone: true,
   imports: [
     FormsModule,
     ReactiveFormsModule,
     CommonModule,
     CurrencyPipe,
+    MarkdownPipe
   ],
   templateUrl: 'dashboard.html',
   styles: [`
     :host { display: block; }
-    .gauge-bg {
-      background: conic-gradient(from 180deg at 50% 100%, var(--tw-gradient-stops));
+    /* Clase para resaltar nodo seleccionado en el árbol si decides implementarlo en el HTML */
+    .node-focused {
+      box-shadow: 0 0 0 2px #0ea5e9; /* Sky-500 ring */
+      background-color: #f0f9ff; /* Sky-50 */
     }
   `],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -43,15 +48,20 @@ export class Dashboard {
     cloud: 'AWS',
     frequency: 1000
   });
+  
   analisis = signal<SmartAnalysisResult | null>(null);
   isInvalidFormat = signal<boolean>(false);
   isProcessing = signal<boolean>(false);
+  
+  // Nuevo: Para resaltar nodos desde las sugerencias
+  activeNodeId = signal<string | null>(null); 
   
   // Static Data
   examples: ExamplePlan[] = examplesExplain;
   readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
   valueExample = signal("");
 
+  // Diccionario de definiciones
   readonly nodeDefinitions: Record<string, string> = {
     perf: "Saturación de hardware (CPU/RAM/Disco).",
     cpu: "Tiempo de procesamiento puro y JIT overhead.",
@@ -72,8 +82,8 @@ export class Dashboard {
   }
 
   setExplain(raw: string) {
-    if (raw.length > 50000) { // Aumentado un poco el límite
-      raw = raw.slice(0, 50000);
+    if (raw.length > 100000) { 
+      raw = raw.slice(0, 100000);
       this.toastService.show('Plan truncado por exceso de longitud.', 'warning');
     }
     this.ecoModel.update(f => ({ ...f, explain: raw }));
@@ -81,7 +91,7 @@ export class Dashboard {
 
   setFrecuency(raw: number) {
     this.ecoModel.update(f => ({ ...f, frequency: raw }));
-    // Debounce manual simple o validación post-input
+    // Debounce manual simple
     if (this.analisis()) this.recalcularCosto();
   }
 
@@ -91,8 +101,23 @@ export class Dashboard {
     const example = this.examples.find(e => e.title === select.value);
     if (example) {
       this.ecoModel.update(f => ({ ...f, explain: example.content }));
-      // Pequeño delay para UX
       setTimeout(() => this.procesarPlan(), 50);
+    }
+  }
+
+  /**
+   * Acción llamada desde el botón de "Lupa" en las sugerencias
+   */
+  focusNode(nodeId: string) {
+    if (!nodeId) return;
+    
+    this.activeNodeId.set(nodeId);
+    this.toastService.show(`Resaltando nodo: ${nodeId}`, 'info');
+
+    // Opcional: Lógica para hacer scroll automático si el árbol es muy largo
+    const element = document.getElementById(`node-${nodeId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }
 
@@ -105,9 +130,10 @@ export class Dashboard {
     if (!this.validarEntrada(cleanText)) return;
 
     this.isProcessing.set(true);
+    // Reseteamos el nodo activo al procesar nuevo plan
+    this.activeNodeId.set(null);
 
     try {
-      // Validar rango frecuencia antes de llamar
       let safeFreq = frequency;
       if (safeFreq < 1) safeFreq = 1;
       if (safeFreq > 20000000) safeFreq = 20000000;
@@ -124,18 +150,24 @@ export class Dashboard {
     }
   }
 
-  // Recálculo ligero sin re-parsear todo el texto si solo cambia precio/frecuencia
   private recalcularCosto() {
     if (!this.analisis()) return;
-    // Nota: Idealmente el servicio tendría un método separado para recalcular solo precio,
-    // pero por ahora re-ejecutamos es suficientemente rápido.
     this.procesarPlan(); 
   }
 
   private validarEntrada(text: string): boolean {
-    if (text.length < 10 || !text.toLowerCase().includes('cost=')) {
+    // Validación laxa para permitir diferentes formatos de EXPLAIN
+    if (text.length < 10) {
       this.isInvalidFormat.set(true);
       return false;
+    }
+    // Check básico de palabras clave de PostgreSQL
+    const keywords = ['Scan', 'Join', 'Loop', 'Cost=', 'cost='];
+    const hasKeyword = keywords.some(k => text.includes(k));
+    
+    if (!hasKeyword) {
+       this.isInvalidFormat.set(true);
+       return false;
     }
     return true;
   }
@@ -147,10 +179,10 @@ export class Dashboard {
   // --- Helpers for View ---
 
   getImpactColor(value: number): string {
-    if (value > 0.8) return 'bg-rose-500';     // Crítico
-    if (value > 0.5) return 'bg-amber-500';    // Alerta
-    if (value > 0.2) return 'bg-blue-400';     // Leve
-    return 'bg-emerald-500';                   // Bien
+    if (value > 0.8) return 'bg-rose-500';     
+    if (value > 0.5) return 'bg-amber-500';    
+    if (value > 0.2) return 'bg-sky-400'; // Cambiado a Sky para mejor contraste con Tailwind default     
+    return 'bg-emerald-500';                   
   }
 
   getTextColor(value: number): string {
@@ -164,9 +196,16 @@ export class Dashboard {
     return c >= 0 && c < 0.01;
   }
 
-  // Icono dinámico según el tipo de nodo
   getIconForNode(nodeId: string): string {
-    switch (nodeId) {
+    // Normalización a minúsculas para comparaciones más seguras
+    const id = nodeId.toLowerCase();
+    
+    if (id.includes('scan')) return '🔍';
+    if (id.includes('join')) return '🔗';
+    if (id.includes('sort')) return '📶';
+    if (id.includes('agg')) return '∑';
+    
+    switch (id) {
       case 'perf': return '🚀';
       case 'cpu': return '⚙️';
       case 'mem': return '💾';
@@ -175,15 +214,15 @@ export class Dashboard {
       case 'waste': return '🗑️';
       case 'complexity': return '🧶';
       case 'eco': return '🌱';
+      case 'recursive_expansion': return '🔄';
       default: return '📊';
     }
   }
 
-  // Obtener el "Top Offender" principal para mostrar en el resumen
   getPrimaryBottleneck(): ImpactNode | null {
     const offenders = this.analisis()?.topOffenders;
     if (offenders && offenders.length > 0) {
-      return offenders[0]; // El de mayor valor
+      return offenders[0];
     }
     return null;
   }

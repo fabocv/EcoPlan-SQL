@@ -1,59 +1,80 @@
 import { Injectable } from '@angular/core';
-import { ImpactNode, ImpactTreeManager } from './ImpactTreeManager'; // Asumiendo ruta relativa
-import { RawMetrics } from './QueryImpactAnalyzer'; // Asumiendo ruta relativa
+// Asegúrate de que estas rutas sean correctas en tu proyecto
+import { ImpactNode } from './ImpactTreeManager';
+import { RawMetrics } from './QueryImpactAnalyzer';
+
+// Importamos los Explainers (Asumiendo que ya creaste los archivos correspondientes)
 import { RecursiveBombExplainer } from './explainers/RecursiveBombExplainer';
-import { InefficientIndexExplainer } from './explainers/InefficientIndexExplainer';
-import { WorkMemExplainer } from './explainers/WorkMemExplainer';
+//import { DiskSortExplainer } from './explainers/DiskSortExplainer'; // Antes WorkMemExplainer
+//import { HighWasteExplainer } from './explainers/HighWasteExplainer'; // Antes InefficientIndexExplainer
+//import { CartesianExplainer } from './explainers/CartesianExplainer'; // O usar GenericExplainer
 
-// Tipos definidos
+// --- 1. DEFINICIÓN DE TIPOS Y INTERFACES ---
+
 export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
-type SuggestionKind = 'corrective' | 'opportunistic' | 'preventive' | 'optimization';
+export type SuggestionKind = 'corrective' | 'opportunistic' | 'preventive' | 'optimization';
 
+/**
+ * Define la regla estática (el "molde")
+ */
 interface Template {
   id: string;
   solution: string;
   kind: SuggestionKind;
   text: string;
-  triggerNodeId?: string; // Sugerencia de a qué nodo del árbol afecta principalmente
+  triggerNodeId?: string; // Pista: 'recursive_expansion', 'mem', 'waste', etc.
 }
 
+/**
+ * Sugerencia evaluada pero aún sin texto largo (Markdown)
+ */
 export interface EvaluatedSuggestion {
-  templateId: string;
+  type: string;           // ID del template (ej: 'DISK_SORT')
+  label: string;          // Título humano
+  solution: string;       // Solución corta
   kind: SuggestionKind;
   severity: Severity;
-  text: string;
-  solution: string;
+  score: number;          // 0.0 a 1.0 (Impacto relativo)
+  
+  // Nodo específico del árbol que causó el problema
   triggeringNode: {
     id: string;
     value: number;
   };
-  impactScore: number;
+  
+  metrics: RawMetrics;    // Datos crudos para el Explainer
 }
 
+/**
+ * El producto final que consume el Frontend
+ */
+export interface ExplainedSuggestion extends EvaluatedSuggestion {
+  title: string;          // Puede ser igual a label o enriquecido
+  markdown: string;       // Explicación completa generada
+  evidence: string[];     // Pistas visuales (ej: "Disk: 12MB")
+  
+  // Resumen de impacto para gráficas
+  impactSummary: {
+    node: string;
+    value: number;
+    contribution: number; // Porcentaje de culpa sobre el total (0-100)
+  };
+}
+
+/**
+ * Contexto necesario para generar explicaciones
+ */
 export interface ExplanationContext {
   impactTree: ImpactNode;
-  impactSaturation: number;
+  impactSaturation: number; // 0.0 a 1.0 (Qué tan "lleno" está el sistema)
   dominantNodes: ImpactNode[];
   rawMetrics: RawMetrics;
   plan: string;
 }
 
-export interface ExplainedSuggestion {
-  id: string;
-  kind: SuggestionKind;
-  severity: Severity;
-  title: string;
-  explanation: string;
-  evidence: string[];
-  recommendation: string;
-  impactSummary: {
-    node: string;
-    value: number;
-    contribution: number;
-  };
-}
-
-// Interfaz para los Explainers (como el RecursiveBombExplainer)
+/**
+ * Contrato para las clases que generan texto (Strategies)
+ */
 export interface SuggestionExplainer {
   extractEvidence(plan: string, metrics: RawMetrics): string[];
   buildExplanation(
@@ -63,42 +84,57 @@ export interface SuggestionExplainer {
   ): string;
 }
 
-// REGISTRO DE EXPLICADORES
-// Aquí conectamos los IDs de los templates con las clases especializadas
+// --- 2. REGISTRO DE EXPLICADORES ---
+// Mapea los IDs de los Templates con las clases lógicas
 const EXPLAINERS: Record<string, SuggestionExplainer> = {
   RECURSIVE_BOMB: new RecursiveBombExplainer(),
-  INNEFFICENT_INDEX: new InefficientIndexExplainer(),
-  WORK_MEM: new WorkMemExplainer(),
-  // 'DISK_SORT': new DiskSortExplainer(), // Futura implementación
-  // 'CARTESIAN': new CartesianExplainer(), // Futura implementación
+  //DISK_SORT: new DiskSortExplainer(),        // Maneja problemas de WorkMem
+  //HIGH_WASTE_SCAN: new HighWasteExplainer(), // Maneja problemas de filtros ineficientes
+  //CARTESIAN_PRODUCT: new CartesianExplainer(), // O un GenericExplainer si no existe
 };
+
+// Explainer por defecto para casos no mapeados
+class GenericExplainer implements SuggestionExplainer {
+  extractEvidence(p: string, m: RawMetrics) { return []; }
+  buildExplanation(s: EvaluatedSuggestion) { 
+    return `### Análisis\nSe detectó: **${s.label}**.\n\nSugerencia: ${s.solution}`; 
+  }
+}
+
+// --- 3. SERVICIO PRINCIPAL ---
 
 @Injectable({ providedIn: 'root' })
 export class SuggestionGen {
+  
   constructor() {}
 
+  /**
+   * 🚀 MÉTODO PÚBLICO PRINCIPAL
+   * Orquesta todo el proceso: Evaluar -> Filtrar -> Explicar
+   */
   public generateSmartSuggestions(
     context: ExplanationContext,
     plan: string,
   ): ExplainedSuggestion[] {
-    // Cambié el retorno a ExplainedSuggestion[] directo para facilitar uso
-
+    
     // 1. Evaluar qué plantillas aplican según las métricas
     const evaluated: EvaluatedSuggestion[] = this.evaluateTemplates(context, plan);
 
     if (evaluated.length === 0) return [];
 
-    // 2. Filtrar por importancia si hay saturación
+    // 2. Filtrar por importancia si hay saturación (evitar ruido visual)
     const filtered = this.filterByKind(evaluated, context.impactSaturation);
 
     if (filtered.length === 0) return [];
 
-    // 3. Colapsar duplicados (si hubiera lógica repetitiva)
+    // 3. Colapsar duplicados (si la misma regla salta varias veces, tomar la peor)
     const collapsed = this.collapseSuggestions(filtered);
 
-    // 4. Generar explicaciones enriquecidas (Evidencia + Narrativa)
+    // 4. Generar explicaciones enriquecidas (Evidencia + Markdown)
     return this.buildExplanations(collapsed, context);
   }
+
+  // --- MOTOR DE REGLAS ---
 
   private evaluateTemplates(context: ExplanationContext, plan: string): EvaluatedSuggestion[] {
     const evaluatedSuggestions: EvaluatedSuggestion[] = [];
@@ -106,37 +142,44 @@ export class SuggestionGen {
 
     for (const template of templates) {
       if (this.isTemplateRelevant(template, context, plan)) {
-        // Intentamos encontrar el nodo del árbol más relevante para esta sugerencia
-        // Si el template define un nodo específico (ej: 'recursive_expansion') lo buscamos,
-        // si no, usamos el nodo dominante general.
+        
+        // 1. Identificar el nodo culpable
+        // Si el template tiene una pista ('mem', 'waste'), buscamos ese nodo específico.
+        // Si no, usamos el nodo más costoso (dominantNode).
         const targetNodeId = template.triggerNodeId;
-        const specificNode = targetNodeId
-          ? this.findNodeRecursive(context.impactTree, targetNodeId)
-          : null;
+        
+        let specificNode: ImpactNode | undefined;
+        if (targetNodeId) {
+             specificNode = this.findNodeByTrigger(targetNodeId, context.impactTree, plan);
+        }
 
-        const triggeringNode = specificNode ||
-          context.dominantNodes[0] || { id: 'unknown', value: 0 };
+        // Fallback al nodo dominante si no encontramos uno específico
+        const triggeringNodeRaw = specificNode || context.dominantNodes[0];
+        
+        // Protección contra undefined
+        const triggeringNodeData = triggeringNodeRaw 
+            ? { id: triggeringNodeRaw.id, value: triggeringNodeRaw.value } 
+            : { id: 'unknown', value: 0 };
 
+        // 2. Crear la sugerencia base
         const suggestion: EvaluatedSuggestion = {
-          templateId: template.id,
+          type: template.id,
+          label: template.text,
           solution: template.solution,
           kind: template.kind,
           severity: this.evaluateSeverity(template, context),
-          text: template.text,
-          triggeringNode: {
-            id: triggeringNode.id,
-            value: triggeringNode.value || 0,
-          },
-          impactScore: (triggeringNode.value || 0) * 100,
+          score: (triggeringNodeData.value || 0), // Score crudo del nodo
+          triggeringNode: triggeringNodeData,
+          metrics: context.rawMetrics
         };
+
         evaluatedSuggestions.push(suggestion);
       }
     }
 
-    return evaluatedSuggestions;
+    // Ordenar por severidad (Critical > High > Medium...)
+    return this.sortSuggestionsBySeverity(evaluatedSuggestions);
   }
-
-  // --- LÓGICA CORE: DEFINICIÓN DE REGLAS ---
 
   private getTemplates(): Template[] {
     return [
@@ -145,27 +188,27 @@ export class SuggestionGen {
         solution: 'Añadir índice en columna de unión o LIMIT.',
         kind: 'corrective',
         text: 'Bomba Recursiva Detectada',
-        triggerNodeId: 'recursive_expansion',
+        triggerNodeId: 'recursive_expansion', // Pista para findNodeByTrigger
       },
       {
         id: 'DISK_SORT',
         solution: 'Incrementar work_mem o eliminar ORDER BY innecesarios.',
         kind: 'corrective',
-        text: 'Ordenamiento costoso en Disco (Swap)',
+        text: 'Ordenamiento en Disco (Swap)',
         triggerNodeId: 'mem',
       },
       {
         id: 'CARTESIAN_PRODUCT',
         solution: 'Revisar condiciones de JOIN faltantes.',
         kind: 'corrective',
-        text: 'Producto Cartesiano Identificado',
+        text: 'Producto Cartesiano',
         triggerNodeId: 'complexity',
       },
       {
         id: 'HIGH_WASTE_SCAN',
         solution: 'Crear índice compuesto que cubra los filtros.',
         kind: 'optimization',
-        text: 'Alto desperdicio de I/O (Filtrado ineficiente)',
+        text: 'Filtrado Ineficiente (High Waste)',
         triggerNodeId: 'waste',
       },
     ];
@@ -180,18 +223,20 @@ export class SuggestionGen {
 
     switch (template.id) {
       case 'RECURSIVE_BOMB':
-        // Coincide con la lógica de tu RecursiveBombExplainer
-        return m.recursiveDepth > 0 && (m.seqScanInLoop || m.maxLoops > 1000);
+        // Lógica: Recursión + (Loop Infinito O Escaneo Secuencial dentro del loop)
+        return (m.recursiveDepth || 0) > 0 && ((m.seqScanInLoop || false) || (m.maxLoops || 0) > 1000);
 
       case 'DISK_SORT':
-        return m.hasDiskSort || m.tempFilesMb > 0;
+        // Lógica: Uso de disco explícito o archivos temporales
+        return (m.hasDiskSort || false) || (m.tempFilesMb || 0) > 0;
 
       case 'CARTESIAN_PRODUCT':
-        return m.isCartesian;
+        return m.isCartesian || false;
 
       case 'HIGH_WASTE_SCAN':
-        // Si leemos mucho pero filtramos casi todo (Waste Ratio alto)
-        return m.wasteRatio > 0.8 && m.executionTime > 50;
+        // Lógica: Se descartan más del 80% de las filas leídas
+        const wasteRatio = m.wasteRatio || 0;
+        return wasteRatio > 0.8 && (m.actualRows || 0) > 1000;
 
       default:
         return false;
@@ -199,145 +244,96 @@ export class SuggestionGen {
   }
 
   private evaluateSeverity(template: Template, context: ExplanationContext): Severity {
-    let severity: Severity = 'info';
-    const sat = context.impactSaturation;
+    // 1. Severidad base por tipo
+    if (template.kind === 'corrective') return 'high';
+    if (template.kind === 'optimization') return 'medium';
 
-    // Reglas base
-    if (template.kind === 'corrective') severity = 'high';
-    else if (template.kind === 'optimization') severity = 'medium';
+    // 2. Ajustes dinámicos
+    const m = context.rawMetrics;
+    
+    if (template.id === 'DISK_SORT' && (m.tempFilesMb || 0) > 50) return 'critical';
+    if (template.id === 'RECURSIVE_BOMB' && (m.recursiveDepth || 0) > 50) return 'critical';
 
-    // Escalado por saturación del sistema
-    if (sat > 0.8) severity = 'critical';
+    // 3. Ajuste por saturación global
+    if (context.impactSaturation > 0.8) return 'critical';
 
-    // Reglas específicas
-    if (template.id === 'DISK_SORT' && context.rawMetrics.tempFilesMb > 50) severity = 'critical';
-
-    return severity;
+    return 'info';
   }
 
-  // --- GENERACIÓN DE EXPLICACIONES ---
+  // --- GENERACIÓN DE CONTENIDO (Markdown) ---
 
   public buildExplanations(
     suggestions: EvaluatedSuggestion[],
     context: ExplanationContext,
   ): ExplainedSuggestion[] {
-    // Necesitamos calcular el impacto total para sacar porcentajes relativos
+    
+    // Calculamos el impacto total del árbol para saber el % de contribución
     const totalTreeImpact = this.calculateTotalImpact(context.impactTree);
 
     return suggestions.map((s) => {
-      // 1. Buscamos el nodo real en el árbol para tener datos frescos
+      // 1. Recuperamos el nodo completo del árbol para que el explainer tenga acceso a sus hijos/stats
       const node = this.findNodeRecursive(context.impactTree, s.triggeringNode.id);
 
-      // 2. Buscamos si existe un Explainer especializado (ej: RecursiveBombExplainer)
-      const explainer = EXPLAINERS[s.templateId];
+      // 2. Buscamos el Explainer correspondiente
+      const explainer = EXPLAINERS[s.type] || new GenericExplainer();
 
-      // 3. Generamos contenido
-      const explanation = explainer
-        ? explainer.buildExplanation(s, node, context)
-        : this.buildDefaultExplanation(s, node);
+      // 3. Generamos el texto explicativo
+      const explanation = explainer.buildExplanation(s, node, context);
+      const evidence = explainer.extractEvidence(context.plan, context.rawMetrics);
 
-      const evidence = explainer
-        ? explainer.extractEvidence(context.plan, context.rawMetrics)
-        : this.extractDefaultEvidence(context.rawMetrics);
-
-      // 4. Calculamos contribución porcentual al problema global
+      // 4. Calculamos contribución porcentual
       const nodeVal = node ? node.value : 0;
-      // Evitamos división por cero si el árbol está sano
-      const contribution = totalTreeImpact > 0 ? Math.round((nodeVal / totalTreeImpact) * 100) : 0;
+      const contribution = totalTreeImpact > 0 
+        ? Math.round((nodeVal / totalTreeImpact) * 100) 
+        : 0;
 
+      // 5. Construimos el objeto final
       return {
-        id: s.templateId,
-        kind: s.kind,
-        severity: s.severity,
-        title: s.text,
-        explanation: explanation,
+        ...s, // Heredamos type, label, severity, metrics...
+        title: s.label,
+        markdown: explanation,
         evidence: evidence,
-        recommendation: s.solution,
         impactSummary: {
           node: s.triggeringNode.id,
           value: nodeVal,
           contribution: contribution,
         },
+        // 'solution' ya viene de 's', no es necesario reasignar si la interfaz lo hereda
       };
     });
   }
 
-  // --- HELPERS ---
+  // --- HELPERS DE ÁRBOL Y LÓGICA ---
 
-  private buildDefaultExplanation(s: EvaluatedSuggestion, node: ImpactNode | undefined): string {
-    return `
-### Análisis Genérico
-Se ha detectado un patrón ineficiente relacionado con **${node?.label || 'Estructura de la consulta'}**.
-El impacto calculado es de **${(node?.value || 0).toFixed(2)}** sobre 1.0.
-
-**Recomendación:** ${s.solution}
-        `.trim();
-  }
-
-  private extractDefaultEvidence(m: RawMetrics): string[] {
-    const ev = [];
-    if (m.executionTime > 100) ev.push(`⏱️ Tiempo alto: ${m.executionTime.toFixed(1)}ms`);
-    if (m.hasDiskSort) ev.push(`💾 Uso de disco detectado`);
-    return ev;
-  }
-
-  private calculateTotalImpact(node: ImpactNode): number {
-    let total = 0;
-
-    const traverseTree = (n: ImpactNode) => {
-      // Verificamos el valor normalizado del nodo antes de sumarlo
-      const normalizedValue = this.validateAndNormalizeImpactValue(n);
-      if (normalizedValue !== null) {
-        total += normalizedValue; // Solo sumamos si el valor es válido
+  /**
+   * Busca un nodo basado en "pistas" del template (ej: "waste" busca Seq Scan)
+   */
+  private findNodeByTrigger(triggerHint: string, root: ImpactNode, planRaw: string): ImpactNode | undefined {
+    const search = (node: ImpactNode, predicate: (n: ImpactNode) => boolean): ImpactNode | undefined => {
+      if (predicate(node)) return node;
+      if (node.children) {
+        for (const child of node.children) {
+          const found = search(child, predicate);
+          if (found) return found;
+        }
       }
-
-      // Procesamos los nodos hijos recursivamente
-      if (n.children) {
-        n.children.forEach((child) => traverseTree(child));
-      }
+      return undefined;
     };
 
-    traverseTree(node);
-    return total; // Devolvemos el total calculado
+    switch (triggerHint) {
+      case 'recursive_expansion':
+        return search(root, n => n.label.includes('Recursive Union') || n.label.includes('CTE'));
+      case 'mem':
+        return search(root, n => n.label.includes('Sort') || n.label.includes('Hash'));
+      case 'complexity':
+        return search(root, n => n.label.includes('Nested Loop') || n.label.includes('Cross Join'));
+      case 'waste':      
+        return search(root, n => n.label.includes('Seq Scan') || n.label.includes('Filter'));
+        
+    }
+    return undefined;
   }
 
-  // Método que evalúa y normaliza el valor de impacto
-  private validateAndNormalizeImpactValue(node: ImpactNode): number | null {
-    // Validamos que el valor esté dentro del rango permitido [0, 1]
-    if (node.value < 0 || node.value > 1) {
-      console.warn(`Valor de impacto no válido para el nodo ${node.id}: ${node.value}`);
-      return null; // Retornamos null si el valor no es válido
-    }
-
-    // Validación adicional: si el nodo es crítico, comprobamos condiciones específicas
-    if (node.isCritical) {
-      if (node.value < 0.5) {
-        console.warn(`Valor crítico bajo para el nodo ${node.id}: ${node.value}`);
-        // Aquí podrías decidir cómo manejar nodos críticos con valores bajos
-        return 0.5; // Ejemplo: elevar el valor mínimo a 0.5
-      }
-    }
-
-    // Implementa más validaciones según sea necesario
-    if (node.children && node.children.length > 0) {
-      const childImpacts = node.children
-        .map((child) => this.validateAndNormalizeImpactValue(child))
-        .filter((n) => n !== null);
-
-      // Si todos los hijos son válidos, puedes también querer evaluar su impacto
-      if (childImpacts.length > 0) {
-        const avgChildImpact =
-          childImpacts.reduce((sum, value) => sum + (value || 0), 0) / childImpacts.length;
-        // Ajuste de valor basado en sus hijos
-        node.value = Math.max(node.value, avgChildImpact); // Por ejemplo, asegurarse de que el valor sea al menos el promedio
-      }
-    }
-
-    // Retornamos el valor validado
-    return node.value;
-  }
-
-  // Búsqueda recursiva para encontrar nodos por ID dentro del ImpactTree
   private findNodeRecursive(root: ImpactNode, targetId: string): ImpactNode | undefined {
     if (root.id === targetId) return root;
     if (root.children) {
@@ -349,31 +345,59 @@ El impacto calculado es de **${(node?.value || 0).toFixed(2)}** sobre 1.0.
     return undefined;
   }
 
-  private filterByKind(
-    suggestions: EvaluatedSuggestion[],
-    saturation: number,
-  ): EvaluatedSuggestion[] {
-    // Si el sistema está saturado (>0.7), solo mostramos problemas críticos/correctivos
-    // para no abrumar al usuario.
+  private calculateTotalImpact(node: ImpactNode): number {
+    let total = 0;
+    const traverse = (n: ImpactNode) => {
+      const val = this.validateAndNormalizeImpactValue(n);
+      if (val !== null) total += val;
+      if (n.children) n.children.forEach(traverse);
+    };
+    traverse(node);
+    return total;
+  }
+
+  private validateAndNormalizeImpactValue(node: ImpactNode): number | null {
+    if (node.value < 0 || node.value > 1.5) return null; // Tolerancia leve > 1
+    return node.value;
+  }
+
+  private filterByKind(suggestions: EvaluatedSuggestion[], saturation: number): EvaluatedSuggestion[] {
     if (saturation > 0.7) {
-      return suggestions.filter((s) => s.kind === 'corrective' || s.severity === 'critical');
+      // En alta carga, solo mostrar lo crítico
+      return suggestions.filter(s => s.severity === 'critical' || s.severity === 'high');
     }
     return suggestions;
   }
 
   private collapseSuggestions(suggestions: EvaluatedSuggestion[]): EvaluatedSuggestion[] {
     const map = new Map<string, EvaluatedSuggestion>();
-    suggestions.forEach((s) => {
-      if (!map.has(s.templateId)) {
-        map.set(s.templateId, s);
+    suggestions.forEach(s => {
+      // Usamos s.type como clave única (ej: RECURSIVE_BOMB)
+      if (!map.has(s.type)) {
+        map.set(s.type, s);
       } else {
-        // Si ya existe, podríamos sumar scores o quedarnos con el de mayor severidad
-        const existing = map.get(s.templateId)!;
-        if (s.impactScore > existing.impactScore) {
-          map.set(s.templateId, s);
+        const existing = map.get(s.type)!;
+        // Nos quedamos con la ocurrencia de mayor impacto
+        if (s.score > existing.score) {
+          map.set(s.type, s);
         }
       }
     });
     return Array.from(map.values());
+  }
+
+  private sortSuggestionsBySeverity(suggestions: EvaluatedSuggestion[]): EvaluatedSuggestion[] {
+    const weights: Record<Severity, number> = {
+      'critical': 5,
+      'high': 4,
+      'medium': 3,
+      'low': 2,
+      'info': 1
+    };
+    return suggestions.sort((a, b) => {
+      const diff = weights[b.severity] - weights[a.severity];
+      if (diff !== 0) return diff;
+      return b.score - a.score; // Desempate por score numérico
+    });
   }
 }

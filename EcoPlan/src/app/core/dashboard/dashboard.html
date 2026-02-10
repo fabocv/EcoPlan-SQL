@@ -33,7 +33,7 @@
             <select 
               [value]="valueExample()"
               (change)="loadExample($event)"
-              class="bg-white border border-slate-200 text-slate-700 text-xs rounded shadow-sm focus:ring-sky-500 focus:border-sky-500 py-1 px-2 outline-none cursor-pointer hover:bg-slate-50">
+              class="w-[80%] lg:w-fit bg-white border border-slate-200 text-slate-700 text-xs rounded shadow-sm focus:ring-sky-500 focus:border-sky-500 py-1 px-2 outline-none cursor-pointer hover:bg-slate-50">
               <option value="" disabled selected>⚡ Cargar Ejemplo</option>
               @for (ex of examples; track ex.title) {
                 <option [value]="ex.title">{{ex.title}}</option>
@@ -230,47 +230,99 @@
             </div>
           </div>
 
-          <!-- RIGHT: AI SUGGESTIONS -->
-          <div class="bg-slate-900 rounded-2xl shadow-xl flex flex-col text-white overflow-hidden">
-            <div class="p-6 border-b border-slate-800 bg-slate-900 sticky top-0 z-10">
+          
+          <div class="bg-slate-900 rounded-2xl shadow-xl flex flex-col text-white overflow-hidden border border-slate-800">
+            <div class="p-6 border-b border-slate-800 bg-slate-900 sticky top-0 z-10 flex justify-between items-center">
                <h3 class="font-bold text-sky-400 uppercase tracking-widest text-xs flex items-center gap-2">
                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                  Recomendaciones FinOps
                </h3>
+               <span class="text-[10px] font-mono text-slate-500 bg-slate-800 px-2 py-1 rounded-full">
+                 {{ analisis()!.suggestions.length }} Detectadas
+               </span>
             </div>
 
-            <div class="p-6 space-y-4 flex-1 overflow-y-auto max-h-[500px] custom-scrollbar">
-              @if (analisis()!.suggestions.list.length === 0) {
-                <div class="text-center py-10 text-slate-500">
-                  <p>✅ No se detectaron optimizaciones críticas.</p>
+            <div class="p-4 space-y-4 flex-1 overflow-y-auto max-h-[500px] custom-scrollbar bg-slate-900/50">
+              
+              <!-- Empty State -->
+              @if (analisis()!.suggestions.length === 0) {
+                <div class="flex flex-col items-center justify-center py-12 text-slate-600">
+                  <svg class="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <p class="text-sm font-medium">Análisis limpio. Sin riesgos críticos.</p>
                 </div>
               }
 
-              @for (msg of analisis()!.suggestions.list; track $index) {
-                <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 hover:border-sky-500/30 transition-colors">
-                  <div class="flex gap-3">
-                    <div class="mt-1 min-w-[24px]">
-                      <div class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center text-xs font-bold border border-sky-500/30">
-                        {{ $index + 1 }}
-                      </div>
+              <!-- Loop de Sugerencias -->
+              @for (sug of analisis()!.suggestions; track sug.type) {
+                <div class="group relative bg-slate-800/40 rounded-xl p-4 border transition-all hover:bg-slate-800/80 hover:shadow-lg"
+                     [ngClass]="{
+                       'border-rose-500/50 shadow-rose-900/10': sug.severity === 'critical',
+                       'border-orange-500/50 shadow-orange-900/10': sug.severity === 'high',
+                       'border-amber-500/50 shadow-amber-900/10': sug.severity === 'medium',
+                       'border-sky-500/50 shadow-sky-900/10': sug.severity === 'low' || sug.severity === 'info'
+                     }">
+                  
+                  <!-- Header: Badge & Title -->
+                  <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2">
+                      <!-- Severity Dot -->
+                      <span class="w-2 h-2 rounded-full animate-pulse"
+                            [ngClass]="{
+                              'bg-rose-500': sug.severity === 'critical',
+                              'bg-orange-500': sug.severity === 'high',
+                              'bg-amber-500': sug.severity === 'medium',
+                              'bg-sky-500': sug.severity === 'low' || sug.severity === 'info'
+                            }"></span>
+                      <h4 class="font-bold text-sm text-slate-100">{{ sug.label }}</h4>
                     </div>
-                    <div class="space-y-2">
-                      <p class="text-sm font-medium text-slate-200 leading-snug">
-                        {{ msg }}
-                      </p>
-                      
-                      <div class="bg-slate-950/50 rounded-lg p-3 border-l-2 border-emerald-500">
-                        <p class="text-[10px] text-emerald-400 font-bold uppercase mb-1">Solución Sugerida</p>
-                        <p class="text-xs text-slate-400">
-                          {{ analisis()!.suggestions.solucion[$index] }}
-                        </p>
-                      </div>
-                    </div>
+                    
+                    <!-- Impact % Badge -->
+                    @if(sug.impactSummary.contribution > 0) {
+                      <span class="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-950/30 text-slate-400 border-slate-700">
+                        Impacto: {{ sug.impactSummary.contribution }}%
+                      </span>
+                    }
                   </div>
+
+                  <!-- Body: Markdown Content -->
+                  <div class="text-xs text-slate-400 leading-relaxed mb-4 [&>p]:mb-2 [&>strong]:text-slate-200 [&>strong]:font-bold [&>ul]:list-disc [&>ul]:pl-4"
+                    [innerHTML]="sug.markdown | markdown">
+                  </div>
+
+                  <!-- Evidence Pills (Pistas Técnicas) -->
+                  @if (sug.evidence && sug.evidence.length > 0) {
+                    <div class="flex flex-wrap gap-2 mb-3 pt-3 border-t border-slate-700/50 border-dashed">
+                      <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider self-center mr-1">Pistas:</span>
+                      @for (ev of sug.evidence; track ev) {
+                        <span class="text-[10px] font-mono bg-slate-950/50 text-sky-300/80 px-2 py-1 rounded border border-sky-900/30">
+                          {{ ev }}
+                        </span>
+                      }
+                    </div>
+                  }
+
+                  <!-- Actions: Solution & Focus -->
+                  <div class="flex items-center gap-3 mt-2">
+                     <div class="flex-1 bg-emerald-950/20 border border-emerald-500/20 rounded-lg px-3 py-2 flex items-start gap-2">
+                        <span class="text-emerald-500 mt-0.5">💡</span>
+                        <p class="text-xs text-emerald-100/80 italic">{{ sug.solution }}</p>
+                     </div>
+                     
+                     <!-- Focus Button (Solo si hay nodeId) -->
+                     @if(sug.impactSummary.node) {
+                       <button (click)="focusNode(sug.impactSummary.node)" 
+                               class="h-full px-3 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 hover:bg-slate-700 transition-colors"
+                               title="Ver en el gráfico">
+                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                       </button>
+                     }
+                  </div>
+
                 </div>
               }
             </div>
           </div>
+
 
         </div>
 

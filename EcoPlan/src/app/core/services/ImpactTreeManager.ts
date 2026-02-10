@@ -1,4 +1,5 @@
 import { CloudProvider } from "./QueryImpactAnalyzer";
+import { ExplainedSuggestion } from "./SuggestionGen";
 
 
 export interface ImpactNode {
@@ -14,7 +15,7 @@ export interface ImpactNode {
 export interface SmartAnalysisResult {
   executionTimeMs: number;
   economicImpact: number;
-  suggestions: {list: string[], solucion: string[]};
+  suggestions: ExplainedSuggestion[];
   efficiencyScore: number;
   provider: CloudProvider;
   execTimeInExplain: boolean;

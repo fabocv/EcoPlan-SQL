@@ -32,6 +32,7 @@ export interface RawMetrics {
   jitTime: number;
   batches: number;
   hasDiskSort: boolean;
+  diskSortSize:number;
   tempFilesMb: number;
   totalBuffersRead: number;
   wasteRatio: number;
@@ -43,10 +44,13 @@ export interface RawMetrics {
   seqScanInLoop: boolean;
   plannedRows: number;
   actualRows: number;
+  rowsRemovedByFilter:number;
   heapFetches: number;
   hasJsonbParallel: boolean;
   hasParallel: boolean;
   isHeavySort: boolean;
+  isCrossJoin : boolean;
+  isHighWaste: boolean;
 }
 
 export interface StructuralFlags {
@@ -129,13 +133,7 @@ export class QueryImpactAnalyzer {
       executionTimeMs: metrics.executionTime,
       economicImpact: this.calculateEconomicImpact(metrics, frequency, provider),
       efficiencyScore: (1 - impactTree.value) * 100,
-      suggestions: {
-        // Mapeamos a arrays de strings simples para compatibilidad con la interfaz SmartAnalysisResult
-        list: explainedSuggestions.map((s) => s.title),
-        solucion: explainedSuggestions.map(
-          (s) => `${s.recommendation} (${s.severity.toUpperCase()})`,
-        ),
-      },
+      suggestions: explainedSuggestions,
       provider: provider,
       execTimeInExplain: metrics.execTimeInExplain,
       impactTree,
@@ -232,8 +230,10 @@ export class QueryImpactAnalyzer {
 
     let batches = 1;
     let hasDiskSort = false;
+    let diskSortSize = 0
     try {
       batches = parseInt(plan.match(/Batches: (\d+)/i)?.[1] || '1');
+      diskSortSize = parseInt(plan.match(/Disk:\s*\d+/i)?.[1] || '1');
       hasDiskSort = batches > 1 || /Disk:\s*\d+/.test(plan) || plan.includes('External sort');
     } catch (error) {
       console.warn('Error parsing batches or disk sort:', error);
@@ -247,8 +247,16 @@ export class QueryImpactAnalyzer {
       console.warn('Error parsing JIT time:', error);
     }
 
-    // Similarmente se puede agregar manejo de errores para las demás métricas...
-    // Código correspondiente para las demás métricas siguiendo el mismo patrón
+    const isCrossJoin = plan.includes('Cross Join');
+    const hugeDiscrepancy = (totalRowsRead || 0) > (actualRows || 0) * 1000;
+    isCrossJoin || (plan.includes('Nested Loop') && hugeDiscrepancy);
+
+    const totalRead = (actualRows || 0) + rowsRemoved;
+    const isHighWaste = () => {
+      if (totalRead === 0) return false;
+      const wasteRatio = rowsRemoved / totalRead;
+      return wasteRatio > 0.8 && rowsRemoved > 1000;
+    }
 
     return {
       executionTime: execTime,
@@ -259,6 +267,7 @@ export class QueryImpactAnalyzer {
         plan.includes('Parallel Seq Scan') && (plan.includes('->>') || plan.includes('->')),
       batches,
       hasDiskSort,
+      diskSortSize,
       tempFilesMb: 0, // Agrega aquí tu lógica del manejo de errores
       totalBuffersRead: 0, // Agrega aquí tu lógica del manejo de errores
       wasteRatio:
@@ -266,7 +275,7 @@ export class QueryImpactAnalyzer {
           ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5)
           : 0,
       isCartesian:
-        planUpper.includes('JOIN FILTER') || (planUpper.includes('NESTED LOOP') && maxLoops > 100),
+        isCrossJoin || planUpper.includes('JOIN FILTER') || (planUpper.includes('NESTED LOOP') && maxLoops > 100),
       workers: parseInt(plan.match(/Workers Launched: (\d+)/i)?.[1] || '0'),
       recursiveDepth: planUpper.includes('RECURSIVE UNION') ? 10 : 0,
       maxLoops,
@@ -274,9 +283,12 @@ export class QueryImpactAnalyzer {
       seqScanInLoop: planUpper.includes('SEQ SCAN') && planUpper.includes('RECURSIVE UNION'),
       actualRows,
       plannedRows,
+      rowsRemovedByFilter:rowsRemoved,
       heapFetches: parseInt(plan.match(/Heap Fetches: (\d+)/)?.[1] || '0'),
       hasParallel: plan.includes('Parallel'),
       isHeavySort: plan.includes('Sort Method') && totalRowsRead > 10000, // Simplificado
+      isCrossJoin: isCrossJoin,
+      isHighWaste: isHighWaste(),
     };
   }
 
