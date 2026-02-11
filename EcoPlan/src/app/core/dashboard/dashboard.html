@@ -1,258 +1,365 @@
-<div class="min-h-screen w-full bg-[#f8fafc] text-slate-900 font-sans">
+<div class="min-h-screen w-full bg-slate-50 text-slate-900 font-sans selection:bg-sky-200">
   
-  <header class="relative z-10 pt-16 pb-8 text-center px-4">
-    <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight text-slate-900 mb-4">
-      EcoPlan <span class="text-sky-600">SQL</span>
-    </h1>
-    <p class="text-lg text-slate-600 max-w-2xl mx-auto">
-      Auditoría de rendimiento FinOps para PostgreSQL. <br>
-      <span class="font-semibold text-sky-800">Convierte el impacto técnico en impacto económico.</span>
-    </p>
+  <!-- HERO HEADER -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 bg-opacity-90 backdrop-blur-md">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 bg-sky-600 rounded-lg flex items-center justify-center text-white font-black text-lg">E</div>
+        <h1 class="text-xl font-bold tracking-tight text-slate-900">
+          EcoPlan <span class="text-sky-600">SQL</span> <span class="text-xs font-normal text-slate-400 ml-2">{{version}}</span>
+        </h1>
+      </div>
+      
+      <div class="flex items-center gap-4 text-sm font-medium text-slate-600">
+        <a href="https://github.com/fabocv/EcoPlan-SQL" target="_blank" class="hover:text-sky-600 transition-colors">GitHub</a>
+        <span class="w-px h-4 bg-slate-300"></span>
+        <span class="text-slate-400">PostgreSQL FinOps Auditor</span>
+      </div>
+    </div>
   </header>
 
-  <main class="max-w-5xl mx-auto px-4 pb-20">
-    <div class="column bg-white rounded-2xl shadow-xl shadow-slate-200/60 p-6 md:p-8 border border-slate-100">
-      <label class="block text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">PostgreSQL Explain Analyze Output</label>
+  <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+    
+    <!-- INPUT SECTION -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
-      @if(examples){
-      <div class="column md:flex items-center justify-between mb-2">
-        <label class="text-sm font-semibold text-slate-700">Selecciona un Escenario Demo:</label>
-        <select 
-          [value]="valueExample()"
-          (change)="loadExample($event)"
-          class="max-w-[80%] bg-white border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 outline-none">
-          <option value="" disabled selected>-- Elige un ejemplo --</option>
-          @for (ex of examples; track ex.title) {
-            <option [value]="ex.title">{{ex.title}}</option>
-          }
-        </select>
-      </div>
-     }
-
-      <textarea 
-        [value]="ecoModel().explain"
-        (input)="setExplain($any($event.target).value)"
-        class="w-full h-64 p-6 font-mono text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-500
-        transition-all outline-none resize-none mb-0"
-        placeholder="Pega aquí tu salida de EXPLAIN (ANALYZE, VERBOSE, BUFFERS) tu_query_pesada"></textarea>
-      
-      <div class=" right-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-        {{ ecoModel().explain.length || 0 }} / 10.000
-      </div>
-
-      <div class="flex flex-col md:flex-row items-center justify-between gap-6">
-        <div class="flex p-1 bg-slate-100 rounded-xl w-full md:w-auto">
-          @for (p of providers; track p) {
-            <button 
-              (click)="setCloud(p)"
-              [class.bg-white]="ecoModel().cloud === p"
-              [class.shadow-sm]="ecoModel().cloud === p"
-              [class.text-sky-600]="ecoModel().cloud === p"
-              class="flex-1 md:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all text-slate-500">
-              {{p}}
-            </button>
-          }
+      <!-- Text Area (Left) -->
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-1">
+        <div class="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-100 rounded-t-lg">
+          <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Explain Analyze Output</label>
           
+          <!-- Example Selector -->
+          @if(examples){
+            <select 
+              [value]="valueExample()"
+              (change)="loadExample($event)"
+              class="w-[80%] lg:w-fit bg-white border border-slate-200 text-slate-700 text-xs rounded shadow-sm focus:ring-sky-500 focus:border-sky-500 py-1 px-2 outline-none cursor-pointer hover:bg-slate-50">
+              <option value="" disabled selected>⚡ Cargar Ejemplo</option>
+              @for (ex of examples; track ex.title) {
+                <option [value]="ex.title">{{ex.title}}</option>
+              }
+            </select>
+          }
         </div>
-        <div class="flex flex-col gap-1 w-full md:w-48">
-          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">
-            Frecuencia Diaria
-          </label>
-          <div class="relative flex items-center gap-2">
+        
+        <textarea 
+          [value]="ecoModel().explain"
+          (input)="setExplain($any($event.target).value)"
+          class="w-full h-72 p-4 font-mono text-xs md:text-sm bg-white text-slate-700 focus:ring-0 border-none outline-none resize-none rounded-b-lg"
+          placeholder="Pegue aquí su plan (EXPLAIN ANALYZE)..."></textarea>
+          
+        <div class="px-4 py-1 bg-slate-50 text-right">
+           <span class="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+            {{ ecoModel().explain.length | number }} chars
+          </span>
+        </div>
+      </div>
+
+      <!-- Controls (Right) -->
+      <div class="flex flex-col gap-4">
+        
+        <!-- Cloud Provider Card -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <label class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 block">Infraestructura</label>
+          <div class="grid grid-cols-3 gap-2">
+            @for (p of providers; track p) {
+              <button 
+                (click)="setCloud(p)"
+                [class.ring-2]="ecoModel().cloud === p"
+                [class.ring-sky-500]="ecoModel().cloud === p"
+                [class.bg-sky-50]="ecoModel().cloud === p"
+                [class.text-sky-700]="ecoModel().cloud === p"
+                class="px-2 py-3 rounded-lg border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-all">
+                {{p}}
+              </button>
+            }
+          </div>
+        </div>
+
+        <!-- Frequency Card -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <label class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 block">Frecuencia Estimada</label>
+          <div class="relative">
             <input 
               type="number" 
               [value]="ecoModel().frequency"
               (input)="setFrecuency(+$any($event.target).value)"
-              (paste)="$event.preventDefault()"
-              (drop)="$event.preventDefault()"
-              onkeypress="return event.charCode >= 48 && event.charCode <= 57"
-              class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold focus:ring-2
-              focus:ring-sky-500/20 outline-none transition-all 
-              [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              placeholder="1 - 2,000,000"
+              class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-slate-900 font-bold focus:ring-2 focus:ring-sky-500 outline-none"
             >
-            <span class="absolute right-3 text-[10px] font-bold text-slate-400">/ día</span>
+            <span class="absolute right-4 top-3.5 text-xs font-bold text-slate-400">ejecuciones / día</span>
           </div>
         </div>
 
+        <!-- Action Button -->
         <button 
-          class="w-full md:w-auto rounded-xl px-10 py-4 font-bold bg-sky-900 text-white hover:bg-sky-800 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-sky-900/20" 
-          (click)="procesarPlan()">
-          Calcular Diagnóstico
+          (click)="procesarPlan()"
+          [disabled]="isProcessing()"
+          class="flex-1 w-full bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold py-4 shadow-lg shadow-slate-900/20 active:scale-[0.98] transition-all disabled:opacity-70 disabled:cursor-wait">
+          @if(isProcessing()) { ⏳ Analizando... } @else { 🚀 Generar Auditoría }
         </button>
+
       </div>
-    </div>
+    </section>
 
-    <div class="space-y-6">
-        @if (analisis()) {
-          <div class="bg-white p-6 rounded-2xl shadow-xl border border-slate-100">
-            <div class="flex justify-between items-start mb-6">
-              <div>
-                <h2 class="text-3xl font-black" [class.text-red-600]="analisis()!.efficiencyScore < 50">
-                  {{ analisis()!.efficiencyScore.toFixed(0) }}%
-                </h2>
-                <p class="text-xs font-bold text-slate-400 uppercase">Efficiency Score</p>
-              </div>
-              <div #explicacionCosto class="text-right">
-                <h2 class="text-3xl font-bold text-slate-900">
-                  @if (esCostoInsignificante()) {
-                    <span class="text-3xl font-bold text-slate-700">< $0.01</span>
-                    @if (analisis()!.execTimeInExplain){
-                      <div class="group relative inline-block mt-1">
-                        <span class="text-3xl text-amber-600 px-2 py-0.5 text-bold cursor-help">
-                          *
-                        </span>
-                        <div class="invisible group-hover:visible absolute right-0 w-48 p-2 mt-2 bg-slate-800 text-white text-[10px] rounded shadow-xl z-50">
-                          No encontramos el tiempo de ejecución claro, le asignamos 0,01 ms.
-                        </div>
-                      </div>
-                    }
-                  } @else {
-                    {{ analisis()!.economicImpact | currency:'USD':'symbol':'1.2-2' }}
-                  }
-                  <sub class="text-slate-600">USD</sub>
-                </h2>
-                <p class="text-xs font-bold text-slate-400 uppercase">Costo Estimado Mensual</p>
-                
-                @if (esCostoInsignificante() && analisis()!.efficiencyScore < 80) {
-                  <div class="group relative inline-block mt-1">
-                    <span class="text-[10px] bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-100 cursor-help">
-                      ¿Por qué < $0.01?
-                    </span>
-                    <div class="invisible group-hover:visible absolute right-0 w-48 p-2 mt-2 bg-slate-800 text-white text-[10px] rounded shadow-xl z-50">
-                      La consulta es muy rápida para generar un cargo notable, pero su baja eficiencia (< 80%) indica que el costo explotará cuando los datos crezcan.
-                    </div>
-                  </div>
-                }
-              </div>
-            </div>
-
-            <div class="space-y-4 pt-4 border-t border-slate-50">
-              <h3 class="text-xs font-bold text-slate-700 uppercase mb-4">Desglose de Impacto por Nodo</h3>
-              
-              @for (node of analisis()!.impactTree.children; track node.id) {
-  <div class="mb-5">
-    <div class="flex justify-between items-center mb-1">
-      
-      <div class="relative group flex items-center gap-1">
-        <span class="font-medium text-slate-600 cursor-help border-b border-dotted border-slate-300">
-          {{ node.label }}
-        </span>
+    <!-- RESULTS SECTION -->
+    @if (analisis()) {
+      <div class="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
         
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-
-        <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block w-56 p-2 bg-slate-800 text-white text-[10px] leading-relaxed rounded-lg shadow-xl z-50 animate-in fade-in zoom-in duration-200">
-          {{ nodeDefinitions[node.id] || 'Métrica de impacto del plan de ejecución.' }}
-          <div class="absolute top-full left-4 -mt-1 border-4 border-transparent border-t-slate-800"></div>
-        </div>
-      </div>
-
-      <span class="font-bold text-xs" [class.text-red-600]="node.value > 0.8">
-        {{ (node.value * 100).toFixed(0) }}%
-      </span>
-    </div>
-
-    <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-      <div 
-        class="h-2 rounded-full transition-all duration-1000"
-        [style.width.%]="node.value * 100"
-        [ngClass]="node.value > 0.7 ? 'bg-red-500' : (node.value > 0.4 ? 'bg-amber-500' : 'bg-emerald-500')">
-      </div>
-    </div>
-  </div>
-}
-              
-              <div class="mt-4 p-3 bg-slate-50 rounded-lg border-l-4 border-sky-500 text-sm text-slate-600 italic">
-                {{ analisis()!.breakdown }}
-              </div>
+        <!-- KPI GRID -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          
+          <!-- Efficiency Score -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+            <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-slate-100 to-transparent rounded-bl-full -mr-8 -mt-8"></div>
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider relative z-10">Efficiency Score</p>
+            <div class="flex items-baseline mt-2 relative z-10">
+              <span class="text-5xl font-black tracking-tighter" [class]="getTextColor(1 - (analisis()!.efficiencyScore/100))">
+                {{ analisis()!.efficiencyScore.toFixed(0) }}
+              </span>
+              <span class="text-lg font-bold text-slate-400 ml-1">/100</span>
             </div>
+            <p class="text-sm text-slate-500 mt-2 leading-tight">
+              {{ analisis()!.breakdown }}
+            </p>
           </div>
 
-          <div class="bg-slate-900 p-6 rounded-2xl shadow-xl text-white">
-            <h3 class="text-xs font-bold text-sky-400 uppercase mb-4 tracking-widest">Recomendaciones FinOps</h3>
-            <div class="space-y-4">
-              @for (msg of analisis()!.suggestions.list; track $index) {
-                <div class="flex gap-3">
-                  <span class="text-sky-500 font-bold">#{{$index + 1}}</span>
-                  <div>
-                    <p class="text-sm font-medium">{{ msg }}</p>
-                    <p class="text-xs text-slate-400 mt-1">Acción: {{ analisis()!.suggestions.solucion[$index] }}</p>
+          <!-- Monthly Cost -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+             <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-emerald-50 to-transparent rounded-bl-full -mr-8 -mt-8"></div>
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider relative z-10">Proyección Mensual ({{analisis()!.provider}})</p>
+            <div class="flex items-baseline mt-2 relative z-10">
+              @if (esCostoInsignificante()) {
+                <span class="text-4xl font-black text-slate-700">< $0.01</span>
+              } @else {
+                <span class="text-4xl font-black text-slate-900">
+                  {{ analisis()!.economicImpact | currency:'USD':'symbol':'1.2-2' }}
+                </span>
+              }
+            </div>
+            <p class="text-xs text-slate-400 mt-2">
+              Basado en {{ ecoModel().frequency | number }} ejecuciones diarias.
+              @if(analisis()!.execTimeInExplain) { <span class="text-amber-500 font-bold" title="Tiempo estimado por falta de datos reales">*</span> }
+            </p>
+          </div>
+
+          <!-- Top Bottleneck -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden group">
+            @if(getPrimaryBottleneck(); as bottle) {
+               <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-rose-50 to-transparent rounded-bl-full -mr-8 -mt-8 transition-all group-hover:scale-110"></div>
+               <p class="text-xs font-bold text-slate-400 uppercase tracking-wider relative z-10">Cuello de Botella Principal</p>
+               <div class="mt-2 relative z-10">
+                 <div class="flex items-center gap-2 mb-1">
+                   <span class="text-3xl">{{ getIconForNode(bottle.id) }}</span>
+                   <span class="text-xl font-bold text-slate-800">{{ bottle.label }}</span>
+                 </div>
+                 <div class="w-full bg-slate-100 rounded-full h-2 mt-2">
+                    <div class="h-2 rounded-full bg-rose-500" [style.width.%]="bottle.value * 100"></div>
+                 </div>
+                 <p class="text-xs text-rose-600 font-medium mt-2">
+                   Impacto Crítico: {{ (bottle.value * 100).toFixed(0) }}% saturación
+                 </p>
+               </div>
+            } @else {
+              <div class="h-full flex flex-col justify-center items-center text-slate-400">
+                <span class="text-2xl">🎉</span>
+                <span class="text-sm font-medium mt-2">Sin riesgos críticos detectados</span>
+              </div>
+            }
+          </div>
+
+        </div>
+
+        <!-- DETAILS GRID -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          <!-- LEFT: IMPACT TREE ANALYSIS -->
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
+            <div class="p-6 border-b border-slate-100">
+               <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                 <svg class="w-5 h-5 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                 Análisis Estructural
+               </h3>
+            </div>
+            
+            <div class="p-6 space-y-6 flex-1 overflow-y-auto max-h-[500px]">
+              @for (node of analisis()!.impactTree.children; track node.id) {
+                <!-- Category Group -->
+                <div class="space-y-3">
+                  <div class="flex justify-between items-end">
+                     <span class="text-sm font-bold text-slate-700 flex items-center gap-2">
+                       {{ getIconForNode(node.id) }} {{ node.label }}
+                     </span>
+                     <span class="text-xs font-mono font-medium text-slate-400">{{ (node.value * 100).toFixed(0) }}%</span>
                   </div>
+                  
+                  <!-- Main Bar -->
+                  <div class="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div class="h-full rounded-full transition-all duration-1000"
+                        [style.width.%]="node.value * 100"
+                        [class]="getImpactColor(node.value)"></div>
+                  </div>
+
+                  <!-- Children (Sub-metrics) -->
+                  @if (node.children && node.children.length > 0) {
+                    <div class="pl-4 space-y-3 pt-1 border-l-2 border-slate-100 ml-1">
+                      @for (child of node.children; track child.id) {
+                        <div>
+                          <div class="flex justify-between text-xs mb-1 group relative">
+                            <span class="text-slate-500 cursor-help border-b border-dotted border-slate-300 hover:text-sky-600 transition-colors">
+                              {{ child.label }}
+                              <!-- Tooltip -->
+                              <div class="invisible group-hover:visible absolute left-0 bottom-full mb-2 w-48 p-2 bg-slate-800 text-white text-[10px] rounded shadow-lg z-50">
+                                {{ nodeDefinitions[child.id] || 'Métrica detallada.' }}
+                              </div>
+                            </span>
+                            <span class="font-medium" [class]="getTextColor(child.value)">
+                              {{ (child.value * 100).toFixed(0) }}%
+                            </span>
+                          </div>
+                          <div class="w-full bg-slate-50 rounded-full h-1">
+                             <div class="h-1 rounded-full opacity-80"
+                                [style.width.%]="child.value * 100"
+                                [class]="getImpactColor(child.value)"></div>
+                          </div>
+                        </div>
+                      }
+                    </div>
+                  }
                 </div>
               }
             </div>
           </div>
-        } @else {
-          <div class="h-full flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-200 rounded-2xl p-12">
-            <div class="text-4xl mb-4">📊</div>
-            <p class="text-sm font-medium">Esperando datos de EXPLAIN para generar el árbol de impacto...</p>
+
+          
+          <div class="bg-slate-900 rounded-2xl shadow-xl flex flex-col text-white overflow-hidden border border-slate-800">
+            <div class="p-6 border-b border-slate-800 bg-slate-900 sticky top-0 z-10 flex justify-between items-center">
+               <h3 class="font-bold text-sky-400 uppercase tracking-widest text-xs flex items-center gap-2">
+                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                 Recomendaciones FinOps
+               </h3>
+               <span class="text-[10px] font-mono text-slate-500 bg-slate-800 px-2 py-1 rounded-full">
+                 {{ analisis()!.suggestions.length }} Detectadas
+               </span>
+            </div>
+
+            <div class="p-4 space-y-4 flex-1 overflow-y-auto max-h-[500px] custom-scrollbar bg-slate-900/50">
+              
+              <!-- Empty State -->
+              @if (analisis()!.suggestions.length === 0) {
+                <div class="flex flex-col items-center justify-center py-12 text-slate-600">
+                  <svg class="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <p class="text-sm font-medium">Análisis limpio. Sin riesgos críticos.</p>
+                </div>
+              }
+
+              <!-- Loop de Sugerencias -->
+              @for (sug of analisis()!.suggestions; track sug.type) {
+                <div class="group relative bg-slate-800/40 rounded-xl p-4 border transition-all hover:bg-slate-800/80 hover:shadow-lg"
+                     [ngClass]="{
+                       'border-rose-500/50 shadow-rose-900/10': sug.severity === 'critical',
+                       'border-orange-500/50 shadow-orange-900/10': sug.severity === 'high',
+                       'border-amber-500/50 shadow-amber-900/10': sug.severity === 'medium',
+                       'border-sky-500/50 shadow-sky-900/10': sug.severity === 'low' || sug.severity === 'info'
+                     }">
+                  
+                  <!-- Header: Badge & Title -->
+                  <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2">
+                      <!-- Severity Dot -->
+                      <span class="w-2 h-2 rounded-full animate-pulse"
+                            [ngClass]="{
+                              'bg-rose-500': sug.severity === 'critical',
+                              'bg-orange-500': sug.severity === 'high',
+                              'bg-amber-500': sug.severity === 'medium',
+                              'bg-sky-500': sug.severity === 'low' || sug.severity === 'info'
+                            }"></span>
+                      <h4 class="font-bold text-sm text-slate-100">{{ sug.label }}</h4>
+                    </div>
+                    
+                    <!-- Impact % Badge -->
+                    @if(sug.impactSummary.contribution > 0) {
+                      <span class="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-950/30 text-slate-400 border-slate-700">
+                        Impacto: {{ sug.impactSummary.contribution }}%
+                      </span>
+                    }
+                  </div>
+
+                  <!-- Body: Markdown Content -->
+                  <div class="text-xs text-slate-400 leading-relaxed mb-4 [&>p]:mb-2 [&>strong]:text-slate-200 [&>strong]:font-bold [&>ul]:list-disc [&>ul]:pl-4"
+                    [innerHTML]="sug.markdown | markdown">
+                  </div>
+
+                  <!-- Evidence Pills (Pistas Técnicas) -->
+                  @if (sug.evidence && sug.evidence.length > 0) {
+                    <div class="flex flex-wrap gap-2 mb-3 pt-3 border-t border-slate-700/50 border-dashed">
+                      <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider self-center mr-1">Pistas:</span>
+                      @for (ev of sug.evidence; track ev) {
+                        <span class="text-[10px] font-mono bg-slate-950/50 text-sky-300/80 px-2 py-1 rounded border border-sky-900/30">
+                          {{ ev }}
+                        </span>
+                      }
+                    </div>
+                  }
+
+                  <!-- Actions: Solution & Focus -->
+                  <div class="flex items-center gap-3 mt-2">
+                     <div class="flex-1 bg-emerald-950/20 border border-emerald-500/20 rounded-lg px-3 py-2 flex items-start gap-2">
+                        <span class="text-emerald-500 mt-0.5">💡</span>
+                        <p class="text-xs text-emerald-100/80 italic">{{ sug.solution }}</p>
+                     </div>
+                     
+                     <!-- Focus Button (Solo si hay nodeId) -->
+                     @if(sug.impactSummary.node) {
+                       <button (click)="focusNode(sug.impactSummary.node)" 
+                               class="h-full px-3 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 hover:bg-slate-700 transition-colors"
+                               title="Ver en el gráfico">
+                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                       </button>
+                     }
+                  </div>
+
+                </div>
+              }
+            </div>
           </div>
-        }
-      </div>
 
-    <footer class="w-full bg-slate-50 border-t border-slate-200 py-6 mt-auto">
-      <div class="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
-        
-        <div class="flex items-center gap-2 text-slate-600">
-          <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
+
+        </div>
+
+      </div>
+    } @else {
+      <!-- EMPTY STATE -->
+      @if(!isProcessing()) {
+        <div class="flex flex-col items-center justify-center py-20 text-slate-400 border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50/50">
+          <svg class="w-16 h-16 mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
-          <a href="https://github.com/fabocv/EcoPlan-SQL" class="text-sm font-medium tracking-tight">
-            EcoPlan-SQL Baseline
-          </a>
+          <p class="text-lg font-medium text-slate-600">Esperando datos...</p>
+          <p class="text-sm">Pega un plan de ejecución o selecciona un ejemplo arriba.</p>
         </div>
-
-        <div class="text-slate-500 text-sm">
-          Desarrollado por 
-          <a href="https://github.com/fabocv" 
-            target="_blank" 
-            class="text-emerald-600 font-bold hover:text-emerald-500 transition-colors duration-200">
-            @fabocv
-          </a>
-        </div>
-
-        <div class="flex items-center gap-3">
-          <a href="https://github.com/fabocv/EcoPlan-SQL" class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700">
-            {{version}} Online
-          </a>
-          <span class="text-slate-400 text-xs italic">© 2026</span>
-        </div>
-
-      </div>
-    </footer>
+      }
+    }
   </main>
-</div>
-
-<div class="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-3 w-full max-w-md px-4 bg-white">
-  @for (toast of toastService.toasts(); track toast.id) {
-    <div 
-      [class]="{
-        'bg-red-50 border-red-200 text-red-800 shadow-red-100': toast.type === 'error',
-        'bg-amber-50 border-amber-200 text-amber-800 shadow-amber-100': toast.type === 'warning',
-        'bg-blue-50 border-blue-200 text-blue-800 shadow-blue-100': toast.type === 'info'
-      }"
-      class="flex items-center p-4 rounded-2xl border shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-300"
-    >
-      <div class="mr-3">
-        @if (toast.type === 'error') { ⚠️ }
-        @else if (toast.type === 'warning') { 💡 }
-        @else { ℹ️ }
-      </div>
-
-      <div class="flex-1 text-sm font-semibold tracking-tight">
-        {{ toast.message }}
-      </div>
-
-      <button 
-        (click)="toastService.remove(toast.id)" 
-        class="ml-4 p-1 hover:bg-black/5 rounded-full transition-colors"
+  
+  <!-- TOASTS CONTAINER -->
+  <div class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+    @for (toast of toastService.toasts(); track toast.id) {
+      <div 
+        [class]="{
+          'bg-white border-rose-100 text-rose-600': toast.type === 'error',
+          'bg-white border-amber-100 text-amber-600': toast.type === 'warning',
+          'bg-white border-sky-100 text-sky-600': toast.type === 'info'
+        }"
+        class="pointer-events-auto flex items-center p-4 rounded-xl border shadow-2xl shadow-slate-200/50 animate-in slide-in-from-right-8 duration-300"
       >
-        <svg class="w-4 h-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-        </svg>
-      </button>
-    </div>
-  }
+        <span class="text-lg mr-3">
+          @if (toast.type === 'error') { ❌ }
+          @else if (toast.type === 'warning') { ⚠️ }
+          @else { ℹ️ }
+        </span>
+        <span class="text-sm font-semibold">{{ toast.message }}</span>
+      </div>
+    }
+  </div>
+
 </div>

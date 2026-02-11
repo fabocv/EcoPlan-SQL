@@ -72,3 +72,14 @@ El Efficiency Score final será multiplicado por un factor de confianza basado e
 - **Confianza 0.5 (Baja):** El plan es solo un EXPLAIN (estimación teórica).
 
 Fórmula Final: Final_Efficiency_Score = (Calculated_Score * Confidence)
+
+## 6. Sustento Científico del Cálculo (Eco-Impact)
+
+El cálculo de la v0.9 se rige por los siguientes estándares de eficiencia:
+
+1. **Ponderación de I/O:** Basado en la relación de Watts/GB entre LPDDR4 y NVMe Gen4. Se penaliza el `Temp Write` con un factor de 1.5x debido al overhead de serialización en PostgreSQL.
+2. **Curva de Saturación:** Se utiliza la **Fórmula de Normalización Logarítmica** para reflejar que, pasado cierto umbral de I/O (250,000 bloques), el impacto ambiental entra en zona de saturación crítica (1.0).
+3. **Referencias:**
+   - *Barroso, L. A., & Hölzle, U. (2007). The Case for Energy-Proportional Computing.*
+   - *PostgreSQL Shared Buffers and I/O Benchmarking, 2023.*
+   - *Estimaciones de Carbono: Cloud Carbon Footprint (open source tool methodology).*

@@ -1,12 +1,15 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { CloudProvider, QueryImpactAnalyzer, AnalysisResult, voidAnalysis } from '../services/QueryImpactAnalyzer';
-import { FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
+import { CloudProvider, QueryImpactAnalyzer } from '../services/QueryImpactAnalyzer';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import { ExamplePlan, examplesExplain } from './examples';
 import { ToastService } from '../services/toast.service';
-import { SmartAnalysisResult } from '../services/ImpactTreeManager';
+// Asegúrate de que SmartAnalysisResult esté actualizado con la nueva estructura de suggestions
+import { SmartAnalysisResult, ImpactNode } from '../services/ImpactTreeManager';
+import { MarkdownPipe } from '../pipes/markdown.pipes';
 
-const CURRENT_VERSION = "v0.8.2"
+const CURRENT_VERSION = "v1.0.2";
+
 interface EcoData {
   explain: string;
   cloud: CloudProvider;
@@ -15,158 +18,209 @@ interface EcoData {
 
 @Component({
   selector: 'app-dashboard',
-  imports: [FormsModule,
+  standalone: true,
+  imports: [
+    FormsModule,
     ReactiveFormsModule,
     CommonModule,
     CurrencyPipe,
+    MarkdownPipe
   ],
   templateUrl: 'dashboard.html',
-  styleUrl: './dashboard.css',
+  styles: [`
+    :host { display: block; }
+    .node-focused {
+      box-shadow: 0 0 0 2px #0ea5e9; /* Sky-500 ring */
+      background-color: #f0f9ff; /* Sky-50 */
+    }
+  `],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Dashboard {
   version = CURRENT_VERSION;
-  servicio = inject(QueryImpactAnalyzer)
+  servicio = inject(QueryImpactAnalyzer);
   toastService = inject(ToastService);
-  planText = signal("{text:''}");
-  cloud = signal<CloudProvider>("AWS");
-  analisis = signal<SmartAnalysisResult | null>(null)
+  
+  // State Signals
   ecoModel = signal<EcoData>({
     explain: '',
     cloud: 'AWS',
     frequency: 1000
   });
-
+  
+  analisis = signal<SmartAnalysisResult | null>(null);
   isInvalidFormat = signal<boolean>(false);
+  isProcessing = signal<boolean>(false);
+  
+  activeNodeId = signal<string | null>(null); 
+  
+  // Static Data
   examples: ExamplePlan[] = examplesExplain;
   readonly providers: CloudProvider[] = ['AWS', 'GCP', 'Azure'];
   valueExample = signal("");
 
+  // Diccionario de definiciones
   readonly nodeDefinitions: Record<string, string> = {
-    perf: "Impacto directo en el tiempo de respuesta y consumo de hardware actual.",
-    cpu: "Presión sobre los núcleos del procesador. Incluye tiempos de ejecución y compilación JIT.",
-    mem: "Uso de memoria RAM. Valores altos indican que los datos están desbordando al disco duro.",
-    io: "Lectura y escritura física en disco. Es el cuello de botella más lento y costoso.",
-    scalability: "Riesgo de que la consulta colapse o se vuelva extremadamente cara al aumentar los datos.",
-    waste: "Eficiencia del filtrado. Mide cuántas filas se leyeron pero terminaron descartándose.",
-    complexity: "Riesgo estructural: presencia de productos cartesianos, bucles infinitos o recursión profunda."
+    perf: "Saturación de hardware (CPU/RAM/Disco).",
+    cpu: "Tiempo de procesamiento puro y JIT overhead.",
+    mem: "Presión en RAM y uso de disco temporal (Disk Sort).",
+    io: "Lectura de bloques (Buffers). El recurso más lento.",
+    scalability: "Riesgo algorítmico al crecer el volumen de datos.",
+    waste: "Filas leídas vs. filas realmente usadas.",
+    complexity: "Bucles anidados, productos cartesianos o recursión.",
+    eco: "Impacto ambiental estimado.",
+    carbon: "Huella de carbono relativa."
   };
 
-  private sanitizeInput(input: string): string {
-    // Elimina cualquier intento de tags HTML para evitar XSS
-    return input.replace(/<[^>]*>?/gm, '').trim();
-  }
+  // --- Actions ---
 
   setCloud(serviceCloud: CloudProvider) {
     this.ecoModel.update(val => ({ ...val, cloud: serviceCloud }));
+    if (this.analisis()) this.recalcularCosto();
   }
 
-  setExplain( raw: string ) {
-    if (raw.length>10000) {
-      raw = raw.slice(0,10000);
-      this.toastService.show('Plan demasiado largo para el baseline.', 'warning');
+  setExplain(raw: string) {
+    if (raw.length > 100000) { 
+      raw = raw.slice(0, 100000);
+      this.toastService.show('Plan truncado por exceso de longitud.', 'warning');
     }
-    this.ecoModel.update(f => ({ ...f, explain:raw }));
+    this.ecoModel.update(f => ({ ...f, explain: raw }));
   }
 
-  setFrecuency( raw: number ) {
-    this.ecoModel.update(f => ({ ...f, frequency:raw }));
-    this.validarRango();
+  setFrecuency(raw: number) {
+    this.ecoModel.update(f => ({ ...f, frequency: raw }));
+    if (this.analisis()) this.recalcularCosto();
   }
+
+  loadExample(event: Event) {
+    const select = event.target as HTMLSelectElement;
+    this.valueExample.set(select.value);
+    const example = this.examples.find(e => e.title === select.value);
+    if (example) {
+      this.ecoModel.update(f => ({ ...f, explain: example.content }));
+      setTimeout(() => this.procesarPlan(), 50);
+    }
+  }
+
+  /**
+   * Acción llamada desde el botón de "Lupa" en las sugerencias
+   */
+  focusNode(nodeId: string) {
+    if (!nodeId) return;
+    
+    this.activeNodeId.set(nodeId);
+    this.toastService.show(`Resaltando nodo: ${nodeId}`, 'info');
+
+    // Opcional: Lógica para hacer scroll automático si el árbol es muy largo
+    const element = document.getElementById(`node-${nodeId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  // --- Core Logic ---
 
   procesarPlan() {
     const { explain, cloud, frequency } = this.ecoModel();
+    const cleanText = this.sanitizeInput(explain);
 
-    // Sanitización básica
-    const cleanText = explain.trim();
+    if (!this.validarEntrada(cleanText)) return;
 
-    if (cleanText.length < 10 || !cleanText.toLowerCase().includes('cost=')) {
-      this.isInvalidFormat.set(true);
-      return;
-    }
+    this.isProcessing.set(true);
+    // Reseteamos el nodo activo al procesar nuevo plan
+    this.activeNodeId.set(null);
 
-    this.isInvalidFormat.set(false);
-    
-    // El servicio ahora devuelve el objeto con el ImpactTree
-    const resultado = this.servicio.analyze(cleanText, cloud, frequency);
-    
-    // Actualizamos el signal con la nueva estructura
-    this.analisis.set(resultado); 
-  }
+    try {
+      let safeFreq = frequency;
+      if (safeFreq < 1) safeFreq = 1;
+      if (safeFreq > 20000000) safeFreq = 20000000;
 
-  // Helper para el HTML: Obtener color según el valor (0 a 1)
-  getImpactColor(value: number): string {
-    if (value > 0.7) return 'bg-red-500';
-    if (value > 0.4) return 'bg-amber-500';
-    return 'bg-emerald-500';
-  }
-
-
-  calcular() {
-    this.validarRango();
-    const rawText = this.ecoModel().explain;
-    const cloudService = this.ecoModel().cloud;
-    let frequency = this.ecoModel().frequency;
-    if (frequency < 1) frequency = 1;
-    if (frequency > 2000000) frequency = 2000000;
-
-    const cleanText = this.sanitizeInput(rawText);
-
-    const isValid = cleanText.length > 10 && 
-                    cleanText.toLowerCase().includes('cost=') && 
-                    cleanText.toLowerCase().includes('rows=');
-
-    if (!isValid) {
-      this.isInvalidFormat.set(true);
+      const resultado = this.servicio.analyzePlan(cleanText, cloud, safeFreq);
+      this.analisis.set(resultado);
+      this.isInvalidFormat.set(false);
+    } catch (e) {
+      console.error(e);
+      this.toastService.show("Error al analizar el plan. Verifica el formato.", "error");
       this.analisis.set(null);
-      return;
+    } finally {
+      this.isProcessing.set(false);
     }
-
-    this.isInvalidFormat.set(false);
-    const res = this.servicio.analyze(cleanText, cloudService, frequency);
-    
-    this.analisis.set({ ...res }); 
   }
 
+  private recalcularCosto() {
+    if (!this.analisis()) return;
+    this.procesarPlan(); 
+  }
+
+  private validarEntrada(text: string): boolean {
+    // Validación laxa para permitir diferentes formatos de EXPLAIN
+    if (text.length < 10) {
+      this.isInvalidFormat.set(true);
+      return false;
+    }
+    // Check básico de palabras clave de PostgreSQL
+    const keywords = ['Scan', 'Join', 'Loop', 'Cost=', 'cost='];
+    const hasKeyword = keywords.some(k => text.includes(k));
+    
+    if (!hasKeyword) {
+       this.isInvalidFormat.set(true);
+       return false;
+    }
+    return true;
+  }
+
+  private sanitizeInput(input: string): string {
+    return input.replace(/<[^>]*>?/gm, '').trim();
+  }
+
+  // --- Helpers for View ---
+
+  getImpactColor(value: number): string {
+    if (value > 0.8) return 'bg-rose-500';     
+    if (value > 0.5) return 'bg-amber-500';    
+    if (value > 0.2) return 'bg-sky-400';
+    return 'bg-emerald-500';                   
+  }
+
+  getTextColor(value: number): string {
+    if (value > 0.8) return 'text-rose-600';
+    if (value > 0.5) return 'text-amber-600';
+    return 'text-emerald-600';
+  }
 
   esCostoInsignificante(): boolean {
     const c = this.analisis()?.economicImpact || 0;
     return c >= 0 && c < 0.01;
   }
 
-  validarRango() {
-    let valor = Math.floor(this.ecoModel().frequency); // Asegurar entero
-    let showToast = false
-    if (!valor || valor < 1) {valor = 1; showToast = true}
-    if (valor > 2000000) {valor = 2000000; showToast = true}
-
-    if (showToast) this.toastService.show('Frecuencia debe estar en el rango 1 a 2 millones.', 'warning');
+  getIconForNode(nodeId: string): string {
+    // Normalización a minúsculas para comparaciones más seguras
+    const id = nodeId.toLowerCase();
     
-    this.ecoModel.update(f => ({
-      ...f,
-      frequency: valor
-    }));
-  }
-
-  analisisCorrecto(): boolean {
-    return !!this.analisis();
-  }
-
-
-  
-
-  // Función para cargar el ejemplo seleccionado
-  loadExample(event: Event) {
-    this.validarRango();
-    const select = event.target as HTMLSelectElement;
-    this.valueExample.set(select.value);
-    const example = this.examples.find(e => e.title === select.value);
-    if (example) {
-      this.ecoModel.update(f => ({
-        ...f,
-        explain: example.content
-      }));
-      setTimeout(() => this.procesarPlan(), 100);
+    if (id.includes('scan')) return '🔍';
+    if (id.includes('join')) return '🔗';
+    if (id.includes('sort')) return '📶';
+    if (id.includes('agg')) return '∑';
+    
+    switch (id) {
+      case 'perf': return '🚀';
+      case 'cpu': return '⚙️';
+      case 'mem': return '💾';
+      case 'io': return '🔌';
+      case 'scalability': return '📈';
+      case 'waste': return '🗑️';
+      case 'complexity': return '🧶';
+      case 'eco': return '🌱';
+      case 'recursive_expansion': return '🔄';
+      default: return '📊';
     }
+  }
+
+  getPrimaryBottleneck(): ImpactNode | null {
+    const offenders = this.analisis()?.topOffenders;
+    if (offenders && offenders.length > 0) {
+      return offenders[0];
+    }
+    return null;
   }
 }
