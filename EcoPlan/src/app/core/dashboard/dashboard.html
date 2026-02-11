@@ -1,55 +1,71 @@
-<div class="min-h-screen w-full bg-slate-50 text-slate-900 font-sans selection:bg-sky-200">
-  
+<div
+  class="min-h-screen w-full bg-slate-950 text-slate-200 font-sans selection:bg-sky-900 selection:text-sky-100"
+>
   <!-- HERO HEADER -->
-  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 bg-opacity-90 backdrop-blur-md">
+  <header class="bg-slate-900/80 border-b border-slate-800 sticky top-0 z-30 backdrop-blur-md">
     <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
       <div class="flex items-center gap-2">
-        <div class="w-8 h-8 bg-sky-600 rounded-lg flex items-center justify-center text-white font-black text-lg">E</div>
-        <h1 class="text-xl font-bold tracking-tight text-slate-900">
-          EcoPlan <span class="text-sky-600">SQL</span> <span class="text-xs font-normal text-slate-400 ml-2">{{version}}</span>
+        <!-- Logo con mejor contraste -->
+        <div
+          class="w-8 h-8 bg-sky-600 rounded-lg flex items-center justify-center text-white font-black text-lg shadow-lg shadow-sky-900/50"
+        >
+          E
+        </div>
+        <h1 class="text-xl font-bold tracking-tight text-slate-100">
+          EcoPlan <span class="text-sky-500">SQL</span>
+          <span class="text-xs font-normal text-slate-500 ml-2">{{ version }}</span>
         </h1>
       </div>
-      
-      <div class="flex items-center gap-4 text-sm font-medium text-slate-600">
-        <a href="https://github.com/fabocv/EcoPlan-SQL" target="_blank" class="hover:text-sky-600 transition-colors">GitHub</a>
-        <span class="w-px h-4 bg-slate-300"></span>
-        <span class="text-slate-400">PostgreSQL FinOps Auditor</span>
+
+      <div class="flex items-center gap-4 text-sm font-medium text-slate-400">
+        <a
+          href="https://github.com/fabocv/EcoPlan-SQL"
+          target="_blank"
+          class="hover:text-sky-400 transition-colors"
+          >GitHub</a
+        >
+        <span class="w-px h-4 bg-slate-700"></span>
+        <span class="text-slate-500">PostgreSQL FinOps Auditor</span>
       </div>
     </div>
   </header>
 
   <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
-    
     <!-- INPUT SECTION -->
     <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
       <!-- Text Area (Left) -->
-      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-1">
-        <div class="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-100 rounded-t-lg">
-          <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Explain Analyze Output</label>
-          
-          <!-- Example Selector -->
-          @if(examples){
-            <select 
+      <div class="lg:col-span-2 bg-slate-900 rounded-xl shadow-lg border border-slate-800 p-1">
+        <div
+          class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 rounded-t-lg"
+        >
+          <label class="text-xs font-bold text-slate-400 uppercase tracking-wider"
+            >Explain Analyze Output</label
+          >
+
+          <!-- Example Selector: Dark input styles -->
+          @if (examples) {
+            <select
               [value]="valueExample()"
               (change)="loadExample($event)"
-              class="w-[80%] lg:w-fit bg-white border border-slate-200 text-slate-700 text-xs rounded shadow-sm focus:ring-sky-500 focus:border-sky-500 py-1 px-2 outline-none cursor-pointer hover:bg-slate-50">
+              class="w-[80%] lg:w-fit bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded shadow-sm focus:ring-1 focus:ring-sky-500 focus:border-sky-500 py-1.5 px-2 outline-none cursor-pointer hover:bg-slate-800 transition-colors"
+            >
               <option value="" disabled selected>⚡ Cargar Ejemplo</option>
               @for (ex of examples; track ex.title) {
-                <option [value]="ex.title">{{ex.title}}</option>
+                <option [value]="ex.title">{{ ex.title }}</option>
               }
             </select>
           }
         </div>
-        
-        <textarea 
+
+        <textarea
           [value]="ecoModel().explain"
           (input)="setExplain($any($event.target).value)"
-          class="w-full h-72 p-4 font-mono text-xs md:text-sm bg-white text-slate-700 focus:ring-0 border-none outline-none resize-none rounded-b-lg"
-          placeholder="Pegue aquí su plan (EXPLAIN ANALYZE)..."></textarea>
-          
-        <div class="px-4 py-1 bg-slate-50 text-right">
-           <span class="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+          class="w-full h-72 p-4 font-mono text-xs md:text-sm bg-slate-950/50 text-slate-300 placeholder-slate-600 focus:ring-0 border-none outline-none resize-none rounded-b-lg custom-scrollbar"
+          placeholder="Pegue aquí su plan (EXPLAIN ANALYZE)..."
+        ></textarea>
+
+        <div class="px-4 py-1 bg-slate-900 text-right border-t border-slate-800/50">
+          <span class="text-[10px] font-bold text-slate-600 uppercase tracking-widest">
             {{ ecoModel().explain.length | number }} chars
           </span>
         </div>
@@ -57,158 +73,226 @@
 
       <!-- Controls (Right) -->
       <div class="flex flex-col gap-4">
-        
         <!-- Cloud Provider Card -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-          <label class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 block">Infraestructura</label>
+        <div class="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800">
+          <label class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 block"
+            >Infraestructura</label
+          >
           <div class="grid grid-cols-3 gap-2">
             @for (p of providers; track p) {
-              <button 
+              <button
                 (click)="setCloud(p)"
-                [class.ring-2]="ecoModel().cloud === p"
+                [class.ring-1]="ecoModel().cloud === p"
                 [class.ring-sky-500]="ecoModel().cloud === p"
-                [class.bg-sky-50]="ecoModel().cloud === p"
-                [class.text-sky-700]="ecoModel().cloud === p"
-                class="px-2 py-3 rounded-lg border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-all">
-                {{p}}
+                [class.bg-sky-900]="ecoModel().cloud === p"
+                [class.bg-opacity-20]="ecoModel().cloud === p"
+                [class.text-sky-400]="ecoModel().cloud === p"
+                [class.border-transparent]="ecoModel().cloud === p"
+                class="px-2 py-3 rounded-lg border border-slate-700 bg-slate-950 text-sm font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-all"
+              >
+                {{ p }}
               </button>
             }
           </div>
         </div>
 
         <!-- Frequency Card -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-          <label class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 block">Frecuencia Estimada</label>
+        <div class="bg-slate-900 p-5 rounded-xl shadow-lg border border-slate-800">
+          <label class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 block"
+            >Frecuencia Estimada</label
+          >
           <div class="relative">
-            <input 
-              type="number" 
+            <input
+              type="number"
               [value]="ecoModel().frequency"
               (input)="setFrecuency(+$any($event.target).value)"
-              class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-slate-900 font-bold focus:ring-2 focus:ring-sky-500 outline-none"
+              class="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 font-bold focus:ring-2 focus:ring-sky-600 focus:border-transparent outline-none transition-all placeholder-slate-600"
+            />
+            <span class="absolute right-4 top-3.5 text-xs font-bold text-slate-500"
+              >ejecuciones / día</span
             >
-            <span class="absolute right-4 top-3.5 text-xs font-bold text-slate-400">ejecuciones / día</span>
           </div>
         </div>
 
         <!-- Action Button -->
-        <button 
+        <button
           (click)="procesarPlan()"
           [disabled]="isProcessing()"
-          class="flex-1 w-full bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold py-4 shadow-lg shadow-slate-900/20 active:scale-[0.98] transition-all disabled:opacity-70 disabled:cursor-wait">
-          @if(isProcessing()) { ⏳ Analizando... } @else { 🚀 Generar Auditoría }
+          class="flex-1 w-full bg-slate-100 hover:bg-white text-slate-900 rounded-xl font-bold py-4 shadow-lg shadow-slate-900/50 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-wait"
+        >
+          @if (isProcessing()) {
+            ⏳ Analizando...
+          } @else {
+            🚀 Generar Auditoría
+          }
         </button>
-
       </div>
     </section>
 
     <!-- RESULTS SECTION -->
     @if (analisis()) {
       <div class="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
-        
         <!-- KPI GRID -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          
           <!-- Efficiency Score -->
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
-            <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-slate-100 to-transparent rounded-bl-full -mr-8 -mt-8"></div>
-            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider relative z-10">Efficiency Score</p>
+          <div
+            class="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-800 relative overflow-hidden group"
+          >
+            <!-- Adjusted gradient to be subtle dark -->
+            <div
+              class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-slate-800 to-transparent rounded-bl-full -mr-8 -mt-8 opacity-50"
+            ></div>
+
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-wider relative z-10">
+              Efficiency Score
+            </p>
             <div class="flex items-baseline mt-2 relative z-10">
-              <span class="text-5xl font-black tracking-tighter" [class]="getTextColor(1 - (analisis()!.efficiencyScore/100))">
+              <span
+                class="text-5xl font-black tracking-tighter"
+                [class]="getTextColor(1 - analisis()!.efficiencyScore / 100)"
+              >
                 {{ analisis()!.efficiencyScore.toFixed(0) }}
               </span>
-              <span class="text-lg font-bold text-slate-400 ml-1">/100</span>
+              <span class="text-lg font-bold text-slate-600 ml-1">/100</span>
             </div>
-            <p class="text-sm text-slate-500 mt-2 leading-tight">
+            <p class="text-sm text-slate-400 mt-2 leading-tight">
               {{ analisis()!.breakdown }}
             </p>
           </div>
 
           <!-- Monthly Cost -->
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
-             <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-emerald-50 to-transparent rounded-bl-full -mr-8 -mt-8"></div>
-            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider relative z-10">Proyección Mensual ({{analisis()!.provider}})</p>
+          <div
+            class="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-800 relative overflow-hidden"
+          >
+            <div
+              class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-emerald-900/40 to-transparent rounded-bl-full -mr-8 -mt-8"
+            ></div>
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-wider relative z-10">
+              Proyección Mensual ({{ analisis()!.provider }})
+            </p>
             <div class="flex items-baseline mt-2 relative z-10">
               @if (esCostoInsignificante()) {
-                <span class="text-4xl font-black text-slate-700">< $0.01</span>
+                <span class="text-4xl font-black text-slate-300">< $0.01</span>
               } @else {
-                <span class="text-4xl font-black text-slate-900">
-                  {{ analisis()!.economicImpact | currency:'USD':'symbol':'1.2-2' }}
+                <span class="text-4xl font-black text-slate-100">
+                  {{ analisis()!.economicImpact | currency: 'USD' : 'symbol' : '1.2-2' }}
                 </span>
               }
             </div>
-            <p class="text-xs text-slate-400 mt-2">
+            <p class="text-xs text-slate-500 mt-2">
               Basado en {{ ecoModel().frequency | number }} ejecuciones diarias.
-              @if(analisis()!.execTimeInExplain) { <span class="text-amber-500 font-bold" title="Tiempo estimado por falta de datos reales">*</span> }
+              @if (analisis()!.execTimeInExplain) {
+                <span
+                  class="text-amber-500 font-bold"
+                  title="Tiempo estimado por falta de datos reales"
+                  >*</span
+                >
+              }
             </p>
           </div>
 
           <!-- Top Bottleneck -->
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden group">
-            @if(getPrimaryBottleneck(); as bottle) {
-               <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-rose-50 to-transparent rounded-bl-full -mr-8 -mt-8 transition-all group-hover:scale-110"></div>
-               <p class="text-xs font-bold text-slate-400 uppercase tracking-wider relative z-10">Cuello de Botella Principal</p>
-               <div class="mt-2 relative z-10">
-                 <div class="flex items-center gap-2 mb-1">
-                   <span class="text-3xl">{{ getIconForNode(bottle.id) }}</span>
-                   <span class="text-xl font-bold text-slate-800">{{ bottle.label }}</span>
-                 </div>
-                 <div class="w-full bg-slate-100 rounded-full h-2 mt-2">
-                    <div class="h-2 rounded-full bg-rose-500" [style.width.%]="bottle.value * 100"></div>
-                 </div>
-                 <p class="text-xs text-rose-600 font-medium mt-2">
-                   Impacto Crítico: {{ (bottle.value * 100).toFixed(0) }}% saturación
-                 </p>
-               </div>
+          <div
+            class="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-800 relative overflow-hidden group"
+          >
+            @if (getPrimaryBottleneck(); as bottle) {
+              <div
+                class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-rose-900/30 to-transparent rounded-bl-full -mr-8 -mt-8 transition-all group-hover:scale-110"
+              ></div>
+              <p class="text-xs font-bold text-slate-500 uppercase tracking-wider relative z-10">
+                Cuello de Botella Principal
+              </p>
+              <div class="mt-2 relative z-10">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-3xl filter drop-shadow-md">{{
+                    getIconForNode(bottle.id)
+                  }}</span>
+                  <span class="text-xl font-bold text-slate-200">{{ bottle.label }}</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-2 border border-slate-700">
+                  <div
+                    class="h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]"
+                    [style.width.%]="bottle.value * 100"
+                  ></div>
+                </div>
+                <p class="text-xs text-rose-400 font-medium mt-2">
+                  Impacto Crítico: {{ (bottle.value * 100).toFixed(0) }}% saturación
+                </p>
+              </div>
             } @else {
-              <div class="h-full flex flex-col justify-center items-center text-slate-400">
-                <span class="text-2xl">🎉</span>
+              <div class="h-full flex flex-col justify-center items-center text-slate-600">
+                <span class="text-2xl opacity-50">🎉</span>
                 <span class="text-sm font-medium mt-2">Sin riesgos críticos detectados</span>
               </div>
             }
           </div>
-
         </div>
 
         <!-- DETAILS GRID -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
           <!-- LEFT: IMPACT TREE ANALYSIS -->
-          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-            <div class="p-6 border-b border-slate-100">
-               <h3 class="font-bold text-slate-800 flex items-center gap-2">
-                 <svg class="w-5 h-5 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-                 Análisis Estructural
-               </h3>
+          <div class="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 flex flex-col">
+            <div class="p-6 border-b border-slate-800">
+              <h3 class="font-bold text-slate-100 flex items-center gap-2">
+                <svg
+                  class="w-5 h-5 text-sky-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  />
+                </svg>
+                Análisis Estructural
+              </h3>
             </div>
-            
-            <div class="p-6 space-y-6 flex-1 overflow-y-auto max-h-[500px]">
+
+            <div class="p-6 space-y-6 flex-1 overflow-y-auto max-h-[500px] custom-scrollbar">
               @for (node of analisis()!.impactTree.children; track node.id) {
                 <!-- Category Group -->
-                <div class="space-y-3">
+                <div
+                  class="space-y-3"
+                  id="node-{{ node.id }}"
+                  [class.node-focused]="activeNodeId() === node.id"
+                >
                   <div class="flex justify-between items-end">
-                     <span class="text-sm font-bold text-slate-700 flex items-center gap-2">
-                       {{ getIconForNode(node.id) }} {{ node.label }}
-                     </span>
-                     <span class="text-xs font-mono font-medium text-slate-400">{{ (node.value * 100).toFixed(0) }}%</span>
+                    <span class="text-sm font-bold text-slate-300 flex items-center gap-2">
+                      {{ getIconForNode(node.id) }} {{ node.label }}
+                    </span>
+                    <span class="text-xs font-mono font-medium text-slate-500"
+                      >{{ (node.value * 100).toFixed(0) }}%</span
+                    >
                   </div>
-                  
+
                   <!-- Main Bar -->
-                  <div class="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                    <div class="h-full rounded-full transition-all duration-1000"
-                        [style.width.%]="node.value * 100"
-                        [class]="getImpactColor(node.value)"></div>
+                  <div
+                    class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden border border-slate-700/50"
+                  >
+                    <div
+                      class="h-full rounded-full transition-all duration-1000 shadow-sm"
+                      [style.width.%]="node.value * 100"
+                      [class]="getImpactColor(node.value)"
+                    ></div>
                   </div>
 
                   <!-- Children (Sub-metrics) -->
                   @if (node.children && node.children.length > 0) {
-                    <div class="pl-4 space-y-3 pt-1 border-l-2 border-slate-100 ml-1">
+                    <div class="pl-4 space-y-3 pt-1 border-l-2 border-slate-800 ml-1">
                       @for (child of node.children; track child.id) {
                         <div>
                           <div class="flex justify-between text-xs mb-1 group relative">
-                            <span class="text-slate-500 cursor-help border-b border-dotted border-slate-300 hover:text-sky-600 transition-colors">
+                            <span
+                              class="text-slate-400 cursor-help border-b border-dotted border-slate-600 hover:text-sky-400 hover:border-sky-400 transition-colors"
+                            >
                               {{ child.label }}
                               <!-- Tooltip -->
-                              <div class="invisible group-hover:visible absolute left-0 bottom-full mb-2 w-48 p-2 bg-slate-800 text-white text-[10px] rounded shadow-lg z-50">
+                              <div
+                                class="invisible group-hover:visible absolute left-0 bottom-full mb-2 w-48 p-2 bg-slate-800 border border-slate-700 text-slate-200 text-[10px] rounded shadow-xl z-50"
+                              >
                                 {{ nodeDefinitions[child.id] || 'Métrica detallada.' }}
                               </div>
                             </span>
@@ -216,10 +300,12 @@
                               {{ (child.value * 100).toFixed(0) }}%
                             </span>
                           </div>
-                          <div class="w-full bg-slate-50 rounded-full h-1">
-                             <div class="h-1 rounded-full opacity-80"
-                                [style.width.%]="child.value * 100"
-                                [class]="getImpactColor(child.value)"></div>
+                          <div class="w-full bg-slate-800/50 rounded-full h-1">
+                            <div
+                              class="h-1 rounded-full opacity-80"
+                              [style.width.%]="child.value * 100"
+                              [class]="getImpactColor(child.value)"
+                            ></div>
                           </div>
                         </div>
                       }
@@ -230,71 +316,114 @@
             </div>
           </div>
 
-          
-          <div class="bg-slate-900 rounded-2xl shadow-xl flex flex-col text-white overflow-hidden border border-slate-800">
-            <div class="p-6 border-b border-slate-800 bg-slate-900 sticky top-0 z-10 flex justify-between items-center">
-               <h3 class="font-bold text-sky-400 uppercase tracking-widest text-xs flex items-center gap-2">
-                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                 Recomendaciones FinOps
-               </h3>
-               <span class="text-[10px] font-mono text-slate-500 bg-slate-800 px-2 py-1 rounded-full">
-                 {{ analisis()!.suggestions.length }} Detectadas
-               </span>
+          <!-- RIGHT: RECOMMENDATIONS (Already Dark, adjusted borders) -->
+          <div
+            class="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 flex flex-col text-white overflow-hidden"
+          >
+            <div
+              class="p-6 border-b border-slate-800 bg-slate-900 sticky top-0 z-10 flex justify-between items-center"
+            >
+              <h3
+                class="font-bold text-sky-400 uppercase tracking-widest text-xs flex items-center gap-2"
+              >
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+                Recomendaciones FinOps
+              </h3>
+              <span
+                class="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-1 rounded-full border border-slate-700"
+              >
+                {{ analisis()!.suggestions.length }} Detectadas
+              </span>
             </div>
 
-            <div class="p-4 space-y-4 flex-1 overflow-y-auto max-h-[500px] custom-scrollbar bg-slate-900/50">
-              
+            <div
+              class="p-4 space-y-4 flex-1 overflow-y-auto max-h-[500px] custom-scrollbar bg-slate-950/30"
+            >
               <!-- Empty State -->
               @if (analisis()!.suggestions.length === 0) {
                 <div class="flex flex-col items-center justify-center py-12 text-slate-600">
-                  <svg class="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <svg
+                    class="w-12 h-12 mb-3 opacity-20"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
                   <p class="text-sm font-medium">Análisis limpio. Sin riesgos críticos.</p>
                 </div>
               }
 
               <!-- Loop de Sugerencias -->
               @for (sug of analisis()!.suggestions; track sug.type) {
-                <div class="group relative bg-slate-800/40 rounded-xl p-4 border transition-all hover:bg-slate-800/80 hover:shadow-lg"
-                     [ngClass]="{
-                       'border-rose-500/50 shadow-rose-900/10': sug.severity === 'critical',
-                       'border-orange-500/50 shadow-orange-900/10': sug.severity === 'high',
-                       'border-amber-500/50 shadow-amber-900/10': sug.severity === 'medium',
-                       'border-sky-500/50 shadow-sky-900/10': sug.severity === 'low' || sug.severity === 'info'
-                     }">
-                  
+                <div
+                  class="group relative bg-slate-800/40 rounded-xl p-4 border transition-all hover:bg-slate-800 hover:shadow-lg hover:border-slate-700"
+                  [ngClass]="{
+                    'border-rose-900/50 shadow-rose-900/5': sug.severity === 'critical',
+                    'border-orange-900/50 shadow-orange-900/5': sug.severity === 'high',
+                    'border-amber-900/50 shadow-amber-900/5': sug.severity === 'medium',
+                    'border-sky-900/50 shadow-sky-900/5':
+                      sug.severity === 'low' || sug.severity === 'info',
+                  }"
+                >
                   <!-- Header: Badge & Title -->
                   <div class="flex justify-between items-start mb-3">
                     <div class="flex items-center gap-2">
                       <!-- Severity Dot -->
-                      <span class="w-2 h-2 rounded-full animate-pulse"
-                            [ngClass]="{
-                              'bg-rose-500': sug.severity === 'critical',
-                              'bg-orange-500': sug.severity === 'high',
-                              'bg-amber-500': sug.severity === 'medium',
-                              'bg-sky-500': sug.severity === 'low' || sug.severity === 'info'
-                            }"></span>
+                      <span
+                        class="w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_currentColor]"
+                        [ngClass]="{
+                          'bg-rose-500 text-rose-500': sug.severity === 'critical',
+                          'bg-orange-500 text-orange-500': sug.severity === 'high',
+                          'bg-amber-500 text-amber-500': sug.severity === 'medium',
+                          'bg-sky-500 text-sky-500':
+                            sug.severity === 'low' || sug.severity === 'info',
+                        }"
+                      ></span>
                       <h4 class="font-bold text-sm text-slate-100">{{ sug.label }}</h4>
                     </div>
-                    
+
                     <!-- Impact % Badge -->
-                    @if(sug.impactSummary.contribution > 0) {
-                      <span class="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-950/30 text-slate-400 border-slate-700">
+                    @if (sug.impactSummary.contribution > 0) {
+                      <span
+                        class="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-900/50 text-slate-400 border-slate-700"
+                      >
                         Impacto: {{ sug.impactSummary.contribution }}%
                       </span>
                     }
                   </div>
 
                   <!-- Body: Markdown Content -->
-                  <div class="text-xs text-slate-400 leading-relaxed mb-4 [&>p]:mb-2 [&>strong]:text-slate-200 [&>strong]:font-bold [&>ul]:list-disc [&>ul]:pl-4"
-                    [innerHTML]="sug.markdown | markdown">
-                  </div>
+                  <div
+                    class="text-xs text-slate-400 leading-relaxed mb-4 [&>p]:mb-2 [&>strong]:text-slate-200 [&>strong]:font-bold [&>ul]:list-disc [&>ul]:pl-4"
+                    [innerHTML]="sug.markdown | markdown"
+                  ></div>
 
                   <!-- Evidence Pills (Pistas Técnicas) -->
                   @if (sug.evidence && sug.evidence.length > 0) {
-                    <div class="flex flex-wrap gap-2 mb-3 pt-3 border-t border-slate-700/50 border-dashed">
-                      <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider self-center mr-1">Pistas:</span>
+                    <div
+                      class="flex flex-wrap gap-2 mb-3 pt-3 border-t border-slate-700/50 border-dashed"
+                    >
+                      <span
+                        class="text-[10px] font-bold text-slate-500 uppercase tracking-wider self-center mr-1"
+                        >Pistas:</span
+                      >
                       @for (ev of sug.evidence; track ev) {
-                        <span class="text-[10px] font-mono bg-slate-950/50 text-sky-300/80 px-2 py-1 rounded border border-sky-900/30">
+                        <span
+                          class="text-[10px] font-mono bg-slate-950/80 text-sky-300/90 px-2 py-1 rounded border border-sky-900/30"
+                        >
                           {{ ev }}
                         </span>
                       }
@@ -303,63 +432,91 @@
 
                   <!-- Actions: Solution & Focus -->
                   <div class="flex items-center gap-3 mt-2">
-                     <div class="flex-1 bg-emerald-950/20 border border-emerald-500/20 rounded-lg px-3 py-2 flex items-start gap-2">
-                        <span class="text-emerald-500 mt-0.5">💡</span>
-                        <p class="text-xs text-emerald-100/80 italic">{{ sug.solution }}</p>
-                     </div>
-                     
-                     <!-- Focus Button (Solo si hay nodeId) -->
-                     @if(sug.impactSummary.node) {
-                       <button (click)="focusNode(sug.impactSummary.node)" 
-                               class="h-full px-3 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:border-slate-400 hover:bg-slate-700 transition-colors"
-                               title="Ver en el gráfico">
-                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                       </button>
-                     }
-                  </div>
+                    <div
+                      class="flex-1 bg-emerald-950/30 border border-emerald-500/20 rounded-lg px-3 py-2 flex items-start gap-2"
+                    >
+                      <span class="text-emerald-400 mt-0.5">💡</span>
+                      <p class="text-xs text-emerald-200/90 italic">{{ sug.solution }}</p>
+                    </div>
 
+                    <!-- Focus Button (Solo si hay nodeId) -->
+                    @if (sug.impactSummary.node) {
+                      <button
+                        (click)="focusNode(sug.impactSummary.node)"
+                        class="h-full px-3 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-700 transition-colors"
+                        title="Ver en el gráfico"
+                      >
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                          />
+                        </svg>
+                      </button>
+                    }
+                  </div>
                 </div>
               }
             </div>
           </div>
-
-
         </div>
-
       </div>
     } @else {
       <!-- EMPTY STATE -->
-      @if(!isProcessing()) {
-        <div class="flex flex-col items-center justify-center py-20 text-slate-400 border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50/50">
-          <svg class="w-16 h-16 mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      @if (!isProcessing()) {
+        <div
+          class="flex flex-col items-center justify-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/50"
+        >
+          <svg
+            class="w-16 h-16 mb-4 text-slate-700"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
           </svg>
-          <p class="text-lg font-medium text-slate-600">Esperando datos...</p>
+          <p class="text-lg font-medium text-slate-400">Esperando datos...</p>
           <p class="text-sm">Pega un plan de ejecución o selecciona un ejemplo arriba.</p>
         </div>
       }
     }
   </main>
-  
-  <!-- TOASTS CONTAINER -->
+
+  <!-- TOASTS CONTAINER (Updated for Dark Mode visibility) -->
   <div class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 w-full max-w-sm pointer-events-none">
     @for (toast of toastService.toasts(); track toast.id) {
-      <div 
+      <div
         [class]="{
-          'bg-white border-rose-100 text-rose-600': toast.type === 'error',
-          'bg-white border-amber-100 text-amber-600': toast.type === 'warning',
-          'bg-white border-sky-100 text-sky-600': toast.type === 'info'
+          'bg-slate-800 border-rose-900 text-rose-400': toast.type === 'error',
+          'bg-slate-800 border-amber-900 text-amber-400': toast.type === 'warning',
+          'bg-slate-800 border-sky-900 text-sky-400': toast.type === 'info',
         }"
-        class="pointer-events-auto flex items-center p-4 rounded-xl border shadow-2xl shadow-slate-200/50 animate-in slide-in-from-right-8 duration-300"
+        class="pointer-events-auto flex items-center p-4 rounded-xl border shadow-2xl shadow-black/50 animate-in slide-in-from-right-8 duration-300"
       >
         <span class="text-lg mr-3">
-          @if (toast.type === 'error') { ❌ }
-          @else if (toast.type === 'warning') { ⚠️ }
-          @else { ℹ️ }
+          @if (toast.type === 'error') {
+            ❌
+          } @else if (toast.type === 'warning') {
+            ⚠️
+          } @else {
+            ℹ️
+          }
         </span>
         <span class="text-sm font-semibold">{{ toast.message }}</span>
       </div>
     }
   </div>
-
 </div>
