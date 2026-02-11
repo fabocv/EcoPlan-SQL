@@ -37,7 +37,7 @@ export interface RawMetrics {
   totalBuffersRead: number;
   wasteRatio: number;
   isCartesian: boolean;
-  isInefficeientJoin:boolean;
+  isInefficeientJoin: boolean;
   workers: number;
   recursiveDepth: number;
   maxLoops: number;
@@ -80,7 +80,7 @@ export class QueryImpactAnalyzer {
   private suggestionGenerator = inject(SuggestionGen);
 
   /**
-   * Director 
+   * Director
    */
   public analyzePlan(
     plan: string,
@@ -120,7 +120,7 @@ export class QueryImpactAnalyzer {
     };
 
     // 2. FASE ESTRUCTURAL (Impact Tree)
-    const {impactTree, maxDepth} = this.buildEcoSQLTree(metrics, structuralFlags);
+    const { impactTree, maxDepth } = this.buildEcoSQLTree(metrics, structuralFlags);
     metrics.maxDepth = maxDepth;
 
     // 3. FASE DE CONTEXTO
@@ -140,8 +140,8 @@ export class QueryImpactAnalyzer {
       impactSaturation,
     };
 
-    console.log("nodos dominantes", dominantNodes)
-    console.table(dominantNodes)
+    //console.log("nodos dominantes", dominantNodes)
+    //console.table(dominantNodes)
 
     // 4. GENERACIÓN DE SUGERENCIAS
     const explainedSuggestions: ExplainedSuggestion[] =
@@ -313,9 +313,10 @@ export class QueryImpactAnalyzer {
       }
     })();
 
-    const wasteRatio = totalRowsRead > 0
-          ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5)
-          : 0
+    const wasteRatio =
+      totalRowsRead > 0
+        ? (rowsRemoved / totalRowsRead) * Math.min(1, Math.log10(totalRowsRead) / 5)
+        : 0;
 
     return {
       executionTime: execTime,
@@ -381,7 +382,10 @@ export class QueryImpactAnalyzer {
     return match ? parseFloat(match[1]) : 0;
   }
 
-  buildEcoSQLTree(metrics: RawMetrics, structuralFlags: StructuralFlags): {impactTree:ImpactNode, maxDepth: number} {
+  buildEcoSQLTree(
+    metrics: RawMetrics,
+    structuralFlags: StructuralFlags,
+  ): { impactTree: ImpactNode; maxDepth: number } {
     const manager = new ImpactTreeManager();
 
     const root: ImpactNode = {
@@ -508,6 +512,6 @@ export class QueryImpactAnalyzer {
     };
 
     manager.resolve(root);
-    return { impactTree:root, maxDepth: manager.calculateMaxDepth(root)};
+    return { impactTree: root, maxDepth: manager.calculateMaxDepth(root) };
   }
 }

@@ -12,6 +12,7 @@ import { HighWasteExplainer } from './explainers/HighWasteExplainer';
 import { CartesianExplainer } from './explainers/CartesianExplainer';
 import { PoorFilteringExplainer } from './explainers/PoorFilteringExplainer';
 import { InefficientJoinExplainer } from './explainers/InefficientJoinExplainer';
+import { MissingIndexExplainer } from './explainers/MissingIndexExplainer';
 
 // --- 1. DEFINICIÓN DE TIPOS Y INTERFACES ---
 
@@ -100,6 +101,7 @@ const EXPLAINERS: Record<string, SuggestionExplainer> = {
   CARTESIAN_PRODUCT: new CartesianExplainer(),
   POOR_FILTERING: new PoorFilteringExplainer(),
   INEFFICIENT_JOIN: new InefficientJoinExplainer(),
+  MISSING_INDEX: new MissingIndexExplainer(),
 };
 
 // Explainer por defecto para casos no mapeados
@@ -129,21 +131,21 @@ export class SuggestionGen {
   ): ExplainedSuggestion[] {
     // 1. Evaluar qué plantillas aplican según las métricas
     const evaluated: EvaluatedSuggestion[] = this.evaluateTemplates(context, flags, plan);
-    console.log('EVALUATED IN GENERATESUGESTIONS')
-    console.table(evaluated);
+    //console.log('EVALUATED IN GENERATESUGESTIONS');
+    //console.table(evaluated);
     if (evaluated.length === 0) return [];
 
     // 2. Filtrar por importancia si hay saturación (evitar ruido visual)
     const filtered = this.filterByKind(evaluated, context.impactSaturation);
 
-    console.log('filtered ', filtered);
+    //console.log('filtered ', filtered);
 
     if (filtered.length === 0) return [];
 
     // 3. Colapsar duplicados (si la misma regla salta varias veces, tomar la peor)
     const collapsed = this.collapseSuggestions(filtered);
 
-    console.log('collapsed', collapsed);
+    //console.log('collapsed', collapsed);
 
     // 4. Generar explicaciones enriquecidas (Evidencia + Markdown)
     return this.buildExplanations(collapsed, context);
@@ -162,6 +164,7 @@ export class SuggestionGen {
     for (const template of templates) {
       const isRelevant = this.isTemplateRelevant(template, context, flags, plan);
       if (isRelevant) {
+        //console.log(template.id, "es relevante")
         // 1. Identificar el nodo culpable
         // Si el template tiene una pista ('mem', 'waste'), buscamos ese nodo específico.
         // Si no, usamos el nodo más costoso (dominantNode).
@@ -214,7 +217,8 @@ export class SuggestionGen {
         kind: 'optimization',
         triggerNodeId: 'waste',
         text: 'Filtrado Ineficiente (Data Waste)',
-        solution: 'La consulta lee un volumen excesivo de datos para las filas que retorna. Verifica que las columnas del WHERE tengan índices apropiados y que sean "SARGable" (evita funciones sobre columnas indexadas).'
+        solution:
+          'La consulta lee un volumen excesivo de datos para las filas que retorna. Verifica que las columnas del WHERE tengan índices apropiados y que sean "SARGable" (evita funciones sobre columnas indexadas).',
       },
       {
         id: 'N_PLUS_ONE',
@@ -238,6 +242,14 @@ export class SuggestionGen {
         triggerNodeId: 'io', // Apunta al cuello de botella de I/O
       },
       {
+        id: 'INEFFICIENT_JOIN',
+        solution:
+          'El índice localiza las filas, pero obliga al motor a ir al disco (Heap) masivamente para filtrar columnas faltantes.',
+        kind: 'optimization',
+        text: 'Índice Incompleto (Heap Fetches altos)',
+        triggerNodeId: 'io',
+      },
+      {
         id: 'DISK_SORT',
         solution: 'Incrementar work_mem o eliminar ORDER BY innecesarios.',
         kind: 'corrective',
@@ -259,18 +271,18 @@ export class SuggestionGen {
         triggerNodeId: 'waste',
       },
       {
-        id: 'HIGH_CPU_PRESSURE',
-        text: 'Saturación de CPU (CPU Bound)',
-        kind: 'corrective',
-        solution: 'Optimizar operaciones de Hash/Sort o reducir el conjunto de datos.',
-        triggerNodeId: 'cpu',
-      },
-      {
         id: 'HIGH_STRUCTURAL_COMPLEXITY',
         solution: 'Usar CTEs (WITH) para aplanar la consulta o reducir anidamiento.',
         kind: 'optimization',
         text: 'Alta Complejidad Estructural',
         triggerNodeId: 'complexity',
+      },
+      {
+        id: 'MISSING_INDEX',
+        solution: 'Se detectó un escaneo secuencial masivo que descarta la mayoría de los datos.',
+        kind: 'optimization',
+        text: 'Falta de Índice',
+        triggerNodeId: 'waste',
       },
     ];
   }
@@ -281,45 +293,60 @@ export class SuggestionGen {
     flags: StructuralFlags,
     plan: string,
   ): boolean {
-    const m = context.rawMetrics;
+    const metrics = context.rawMetrics;
 
+    // Definir constantes para umbrales
+    const WASTE_THRESHOLD = 0.7;
+    const HIGH_WASTE_THRESHOLD = 0.8;
+    const RECURSION_THRESHOLD = 0;
+    const MAX_LOOPS_THRESHOLD = 1000;
+
+    //console.log(template.id)
+    // Comprobar qué template es relevante
     switch (template.id) {
+      case 'INEFFICIENT_JOIN':
+        //console.log('inef join ',flags.isIndexScan, flags.heavyHeapUsage, flags.heavyFiltering);
+        return flags.isIndexScan && (flags.heavyHeapUsage || flags.heavyFiltering);
+
       case 'RECURSIVE_BOMB':
-        // Lógica: Recursión + (Loop Infinito O Escaneo Secuencial dentro del loop)
+        // Evaluar si hay recursión y si hay un escaneo secuencial en un loop
         return (
-          (m.recursiveDepth || 0) > 0 && (m.seqScanInLoop || false || (m.maxLoops || 0) > 1000)
+          metrics.recursiveDepth > RECURSION_THRESHOLD &&
+          (metrics.seqScanInLoop || metrics.maxLoops > MAX_LOOPS_THRESHOLD)
         );
 
+      case 'MISSING_INDEX':
+        const wasteNode = context.dominantNodes.find((n) => n.id === 'waste');
+        return wasteNode ? wasteNode.value > WASTE_THRESHOLD : false;
+
       case 'N_PLUS_ONE':
-        return this.isNPlusOnePattern(context.impactTree, context.rawMetrics, context.plan);
+        return this.isNPlusOnePattern(context.impactTree, metrics, plan);
 
       case 'POOR_FILTERING':
-        const wasteNode =  context.dominantNodes.find(n => n.id === 'waste')
-        return !!wasteNode && wasteNode.value >= 0.4;
+        const waste = context.dominantNodes.find((n) => n.id === 'waste');
+        const isSeqScan = plan.includes('Seq Scan') || plan.includes('Parallel Seq Scan');
+        if (waste && waste.value > HIGH_WASTE_THRESHOLD && isSeqScan) return false;
+        return waste ? waste.value >= 0.4 : false;
 
       case 'DISK_SORT':
-        // Lógica: Uso de disco explícito o archivos temporales
-        return m.hasDiskSort || (m.tempFilesMb || 0) > 0;
+        return metrics.hasDiskSort || metrics.tempFilesMb > 0;
 
       case 'CARTESIAN_PRODUCT':
-        return m.isCartesian;
-
-      case 'INEFFICIENT_JOIN':
-        return m.isInefficeientJoin
+        return metrics.isCartesian;
 
       case 'HIGH_WASTE_SCAN':
-        // Lógica: Se descartan más del 80% de las filas leídas
-        const wasteRatio = m.wasteRatio || 0;
-        return wasteRatio > 0.8 && (m.actualRows || 0) > 1000;
-      case 'INEFFICIENT_INDEX':
-        return flags.isIndexScan && (flags.heavyHeapUsage || flags.heavyFiltering);
+        const wasteRatio = metrics.wasteRatio || 0;
+        if (wasteRatio > HIGH_WASTE_THRESHOLD + 0.1) return true; // si es mayor a 0.9 el desperdicio es muy alto
+        return wasteRatio > HIGH_WASTE_THRESHOLD && metrics.actualRows > 1000;
+
       default:
-        return false;
+        return false; // Si no se reconoce el template, no es relevante
     }
   }
 
   private evaluateSeverity(template: Template, context: ExplanationContext): Severity {
     const m = context.rawMetrics;
+    const plan = context.plan;
 
     // ---------------------------------------------------------
     // 1. Severidad Base por Tipo (Baseline)
@@ -360,6 +387,45 @@ export class SuggestionGen {
       }
     }
 
+    // CASO: Join Ineficiente (Index Scan que abusa del Heap)
+    if (template.id === 'INEFFICIENT_JOIN') {
+      const heapFetches = m.heapFetches || 0;
+      const rowsRemoved = m.rowsRemovedByFilter || 0;
+      const actualRows = m.actualRows || 0;
+
+      // Total de filas que el índice "tocó"
+      const totalScanned = actualRows + rowsRemoved;
+
+      // Ratio de desperdicio: Si leo 100 y tiro 90, es 0.9 (90% basura)
+      const wasteRatio = totalScanned > 0 ? rowsRemoved / totalScanned : 0;
+
+      // CRITICAL:
+      if (heapFetches > 20000 || (wasteRatio > 0.95 && totalScanned > 50000)) {
+        severity = 'critical';
+      }
+      // HIGH:
+      else if (heapFetches > 1000 || (wasteRatio > 0.8 && totalScanned > 1000)) {
+        severity = 'high';
+      }
+      // MEDIUM:
+      // Es ineficiente estructuralmente, pero si son pocas filas, el impacto es menor.
+      else {
+        severity = 'medium';
+      }
+    }
+
+    if (template.id === 'MISSING_INDEX') {
+      const wasteNode = context.dominantNodes.find((n) => n.id === 'waste');
+      const isJsonScan = plan.includes('->>') || plan.includes('->');
+
+      if ((isJsonScan && m.rowsRemovedByFilter > 100000) || m.rowsRemovedByFilter > 1000000)
+        return 'critical';
+      if ((wasteNode?.value || 0) > 0.9 && m.rowsRemovedByFilter > 100000) return 'critical';
+      if (m.rowsRemovedByFilter > 100000) return 'high';
+      if ((wasteNode?.value || 0) > 0.7 && m.rowsRemovedByFilter > 10000) return 'high';
+      return 'medium'; // Default para missing index
+    }
+
     if (template.id == 'N_PLUS_ONE') {
       if (m.maxLoops < 10000) {
         severity = 'critical';
@@ -371,9 +437,9 @@ export class SuggestionGen {
       const mb = m.tempFilesMb || 0;
       if (mb > 50) {
         severity = 'critical';
-      } else if (mb > 10) {   
+      } else if (mb > 10) {
         severity = 'high';
-      } else {    
+      } else {
         // Si es > 0 pero < 10, sigue siendo un problema de rendimiento (Medium)
         severity = 'medium';
       }
